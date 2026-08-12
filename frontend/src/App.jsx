@@ -1,122 +1,142 @@
-import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
-import heroImg from './assets/hero.png'
-import './App.css'
+import { useState } from "react";
+import { generateVideo } from "./api";
+import "./index.css";
 
 function App() {
-  const [count, setCount] = useState(0)
+  const [code, setCode] = useState(
+`#include <iostream>
+using namespace std;
+
+int main() {
+    int arr[] = {5, 2, 8, 1};
+
+    for(int i = 0; i < 4; i++) {
+        cout << arr[i] << " ";
+    }
+
+    return 0;
+}`
+  );
+
+  const [language, setLanguage] = useState("cpp");
+  const [loading, setLoading] = useState(false);
+  const [videoUrl, setVideoUrl] = useState(null);
+  const [error, setError] = useState("");
+
+  const handleGenerate = async () => {
+    if (!code.trim()) {
+      setError("Please enter some code.");
+      return;
+    }
+
+    setLoading(true);
+    setError("");
+    setVideoUrl(null);
+
+    try {
+      const result = await generateVideo(code, language);
+
+      setVideoUrl(result.video_url);
+    } catch (err) {
+      setError("Failed to generate visualization.");
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
-    <>
-      <section id="center">
-        <div className="hero">
-          <img src={heroImg} className="base" width="170" height="179" alt="" />
-          <img src={reactLogo} className="framework" alt="React logo" />
-          <img src={viteLogo} className="vite" alt="Vite logo" />
-        </div>
-        <div>
-          <h1>Get started</h1>
-          <p>
-            Edit <code>src/App.jsx</code> and save to test <code>HMR</code>
-          </p>
-        </div>
-        <button
-          type="button"
-          className="counter"
-          onClick={() => setCount((count) => count + 1)}
-        >
-          Count is {count}
-        </button>
-      </section>
+    <div className="app">
 
-      <div className="ticks"></div>
+      <header className="navbar">
+        <h1>Code2Video</h1>
+        <p>Visualize your code with AI</p>
+      </header>
 
-      <section id="next-steps">
-        <div id="docs">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#documentation-icon"></use>
-          </svg>
-          <h2>Documentation</h2>
-          <p>Your questions, answered</p>
-          <ul>
-            <li>
-              <a href="https://vite.dev/" target="_blank">
-                <img className="logo" src={viteLogo} alt="" />
-                Explore Vite
-              </a>
-            </li>
-            <li>
-              <a href="https://react.dev/" target="_blank">
-                <img className="button-icon" src={reactLogo} alt="" />
-                Learn more
-              </a>
-            </li>
-          </ul>
-        </div>
-        <div id="social">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#social-icon"></use>
-          </svg>
-          <h2>Connect with us</h2>
-          <p>Join the Vite community</p>
-          <ul>
-            <li>
-              <a href="https://github.com/vitejs/vite" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#github-icon"></use>
-                </svg>
-                GitHub
-              </a>
-            </li>
-            <li>
-              <a href="https://chat.vite.dev/" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#discord-icon"></use>
-                </svg>
-                Discord
-              </a>
-            </li>
-            <li>
-              <a href="https://x.com/vite_js" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#x-icon"></use>
-                </svg>
-                X.com
-              </a>
-            </li>
-            <li>
-              <a href="https://bsky.app/profile/vite.dev" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#bluesky-icon"></use>
-                </svg>
-                Bluesky
-              </a>
-            </li>
-          </ul>
-        </div>
-      </section>
+      <main className="container">
 
-      <div className="ticks"></div>
-      <section id="spacer"></section>
-    </>
-  )
+        <section className="editor-section">
+
+          <div className="section-header">
+            <h2>Upload / Enter Code</h2>
+
+            <select
+              value={language}
+              onChange={(e) => setLanguage(e.target.value)}
+            >
+              <option value="cpp">C++</option>
+              <option value="python">Python</option>
+              <option value="java">Java</option>
+              <option value="javascript">JavaScript</option>
+            </select>
+          </div>
+
+          <textarea
+            value={code}
+            onChange={(e) => setCode(e.target.value)}
+            placeholder="Paste your code here..."
+            spellCheck="false"
+          />
+
+          <button
+            onClick={handleGenerate}
+            disabled={loading}
+          >
+            {loading ? "Generating..." : "Generate Visualization"}
+          </button>
+
+          {error && (
+            <p className="error">
+              {error}
+            </p>
+          )}
+
+        </section>
+
+        <section className="video-section">
+
+          <h2>Visualization</h2>
+
+          {loading && (
+            <div className="loading">
+              <div className="spinner"></div>
+              <p>
+                Analyzing code and generating animation...
+              </p>
+            </div>
+          )}
+
+          {!loading && !videoUrl && (
+            <div className="empty">
+              <p>Your generated visualization will appear here.</p>
+            </div>
+          )}
+
+          {videoUrl && (
+            <div className="video-container">
+
+              <video
+                controls
+                src={videoUrl}
+              />
+
+              <a
+                href={videoUrl}
+                download="code-visualization.mp4"
+                className="download"
+              >
+                Download Video
+              </a>
+
+            </div>
+          )}
+
+        </section>
+
+      </main>
+
+    </div>
+  );
 }
 
-export default App
+export default App;
