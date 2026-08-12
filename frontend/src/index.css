@@ -165,6 +165,19 @@ button:disabled {
   background: black;
 }
 
+.meta {
+  margin-bottom: 12px;
+  padding: 12px;
+  background: #f3f4f6;
+  border-radius: 8px;
+  font-size: 14px;
+  color: #374151;
+}
+
+.meta p + p {
+  margin-top: 4px;
+}
+
 .download {
   display: block;
 

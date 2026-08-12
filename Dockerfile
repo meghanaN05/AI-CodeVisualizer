@@ -18,10 +18,12 @@ COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy backend code
-COPY backend/ .
+COPY backend/ ./backend/
 
 # Create required directories
-RUN mkdir -p uploads outputs
+RUN mkdir -p uploads outputs/videos outputs/scenes outputs/media
+
+WORKDIR /app/backend
 
 EXPOSE 8000
 

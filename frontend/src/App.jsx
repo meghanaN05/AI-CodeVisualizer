@@ -21,6 +21,7 @@ int main() {
   const [language, setLanguage] = useState("cpp");
   const [loading, setLoading] = useState(false);
   const [videoUrl, setVideoUrl] = useState(null);
+  const [meta, setMeta] = useState(null);
   const [error, setError] = useState("");
 
   const handleGenerate = async () => {
@@ -32,13 +33,19 @@ int main() {
     setLoading(true);
     setError("");
     setVideoUrl(null);
+    setMeta(null);
 
     try {
       const result = await generateVideo(code, language);
 
       setVideoUrl(result.video_url);
+      setMeta({
+        algorithm: result.algorithm,
+        title: result.title,
+        dataStructure: result.data_structure,
+      });
     } catch (err) {
-      setError("Failed to generate visualization.");
+      setError(err.message || "Failed to generate visualization.");
       console.error(err);
     } finally {
       setLoading(false);
@@ -114,6 +121,14 @@ int main() {
 
           {videoUrl && (
             <div className="video-container">
+
+              {meta && (
+                <div className="meta">
+                  <p><strong>{meta.title}</strong></p>
+                  {meta.algorithm && <p>Algorithm: {meta.algorithm}</p>}
+                  {meta.dataStructure && <p>Data structure: {meta.dataStructure}</p>}
+                </div>
+              )}
 
               <video
                 controls

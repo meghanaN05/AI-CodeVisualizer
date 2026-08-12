@@ -1,0 +1,7 @@
+outputs/media/
+outputs/scenes/*.py
+outputs/videos/*.mp4
+backend/venv/
+backend/__pycache__/
+*.pyc
+.env
