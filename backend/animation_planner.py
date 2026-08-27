@@ -5,6 +5,8 @@ from __future__ import annotations
 from typing import Any
 
 from animation_schema import AnimationPlan, SceneAction
+from graph_extractor import extract_graph
+from visualization.layout import compute_graph_layout
 
 DEFAULT_TREE: dict[str, Any] = {
     "value": 10,
@@ -50,6 +52,8 @@ def plan_from_ir(ir: dict[str, Any]) -> AnimationPlan:
         return _plan_postorder(ir)
     if algorithm == "binary_search":
         return _plan_binary_search(ir)
+    if algorithm == "dijkstra":
+        return _plan_dijkstra(ir)
     if algorithm == "bubble_sort":
         return _plan_bubble_sort(ir)
     if algorithm == "selection_sort":
@@ -64,10 +68,10 @@ def plan_from_ir(ir: dict[str, Any]) -> AnimationPlan:
         return _plan_recursion(ir)
     if "binary_tree" in data_structures:
         return _plan_tree_generic(ir)
-    if "array" in data_structures or ir.get("arrays"):
-        return _plan_array(ir)
     if "graph" in data_structures:
         return _plan_graph_generic(ir)
+    if "array" in data_structures or ir.get("arrays"):
+        return _plan_array(ir)
     if "hash_map" in data_structures:
         return _plan_hashmap(ir)
     if "heap" in data_structures:
@@ -534,6 +538,198 @@ def _plan_binary_search(ir: dict[str, Any]) -> AnimationPlan:
     )
 
 
+DIJKSTRA_GRAPH: dict[str, Any] = {
+    "nodes": ["A", "B", "C", "D", "E"],
+    "edges": [
+        ("A", "B", 4),
+        ("A", "C", 2),
+        ("B", "C", 1),
+        ("B", "D", 5),
+        ("C", "D", 8),
+        ("C", "E", 10),
+        ("D", "E", 2),
+        ("B", "E", 6),
+    ],
+    "source": "A",
+}
+
+
+def _plan_dijkstra(ir: dict[str, Any]) -> AnimationPlan:
+    source_code = ir.get("source_code") or ""
+
+    # Derive the ACTUAL graph the user wrote, if present.
+    real = extract_graph(source_code, ir.get("language", ""))
+    if real is not None and real.get("edges"):
+        node_ids = list(real["nodes"])
+        weighted_edges = list(real["edges"])
+        source = real.get("source") or node_ids[0]
+        source_label = "your graph"
+    else:
+        # No concrete graph inline (graph comes in as a parameter). Show an
+        # explicitly-labeled illustrative graph rather than pretending it is
+        # the user's data.
+        node_ids = list(DIJKSTRA_GRAPH["nodes"])
+        weighted_edges = list(DIJKSTRA_GRAPH["edges"])
+        source = DIJKSTRA_GRAPH["source"]
+        source_label = "illustrative graph"
+
+    layout = compute_graph_layout(node_ids, weighted_edges)
+    layout_list = {node: list(layout[node]) for node in node_ids}
+
+    graph_dsl = {
+        "type": "graph",
+        "nodes": [{"id": node, "label": node} for node in node_ids],
+        "edges": [
+            {"from": u, "to": v, "weight": w}
+            for u, v, w in weighted_edges
+        ],
+        "layout": layout_list,
+    }
+
+    order, distances, _prev = _run_dijkstra(node_ids, weighted_edges, source)
+    dist_ready: dict[str, int] = {source: 0}
+
+    scenes: list[SceneAction] = [
+        SceneAction(action="show_title", text="Dijkstra's Shortest Path"),
+        SceneAction(
+            action="show_weighted_graph",
+            graph=graph_dsl,
+            caption=f"Weighted {source_label} — find shortest path from {source} to every node",
+        ),
+        SceneAction(
+            action="show_variables",
+            variables={node: "∞" for node in node_ids},
+            caption=f"Initialize dist[{source}]=0, all others to infinity",
+        ),
+    ]
+
+    for node in order:
+        dist_ready_node = dist_ready.get(node)
+        scenes.append(
+            SceneAction(
+                action="visit_node",
+                node=node,
+                caption=f"Settle node {node} (dist = {dist_ready_node if dist_ready_node is not None else '∞'})",
+            )
+        )
+        node_edges = [
+            (u, v, w)
+            for u, v, w in weighted_edges
+            if (u == node or v == node)
+        ]
+        node_edges.sort(key=lambda e: e[2])
+        for u, v, w in node_edges:
+            neighbor = v if u == node else u
+            base = dist_ready.get(node)
+            if base is None:
+                continue
+            new_dist = base + int(w)
+            old = dist_ready.get(neighbor)
+            if old is None or new_dist < old:
+                dist_ready[neighbor] = new_dist
+                scenes.append(
+                    SceneAction(
+                        action="relax_edge",
+                        **{"from": u, "to": v, "weight": w},
+                        caption=f"Relax edge {u}→{v} ({w}): update {neighbor} to {new_dist}",
+                    )
+                )
+                scenes.append(
+                    SceneAction(
+                        action="update_distance",
+                        node=neighbor,
+                        distances={n: ("∞" if n not in dist_ready else dist_ready[n]) for n in node_ids},
+                        label=str(new_dist),
+                        caption=f"dist[{neighbor}] = {new_dist}",
+                    )
+                )
+
+    target = _dijkstra_target(node_ids, dist_ready, source)
+    path = _reconstruct_path(_prev, source, target) if target else [source]
+
+    scenes.append(
+        SceneAction(
+            action="show_shortest_path",
+            path=path,
+            graph=graph_dsl,
+            caption=f"Shortest path {source} → {target}: {path}",
+        )
+    )
+    scenes.append(
+        SceneAction(
+            action="show_caption",
+            text="Final distances: " + ", ".join(f"{n}={dist_ready.get(n, '∞')}" for n in node_ids),
+        )
+    )
+
+    return AnimationPlan(
+        algorithm="dijkstra",
+        title="Dijkstra's Algorithm",
+        data_structure="graph",
+        description="Single-source shortest paths on a weighted graph",
+        scenes=scenes,
+    )
+
+
+def _run_dijkstra(
+    nodes: list[str],
+    edges: list[tuple[str, str, Any]],
+    source: str,
+) -> tuple[list[str], dict[str, int], dict[str, str]]:
+    """Run Dijkstra over the actual graph. Returns (visit_order, dist, prev)."""
+    adjacency: dict[str, list[tuple[str, Any]]] = {n: [] for n in nodes}
+    for u, v, w in edges:
+        adjacency[u].append((v, w))
+
+    dist: dict[str, int] = {n: float("inf") for n in nodes}  # type: ignore[arg-type]
+    prev: dict[str, str] = {}
+    dist[source] = 0
+    visited: set[str] = set()
+    order: list[str] = []
+
+    for _ in range(len(nodes)):
+        candidates = [n for n in nodes if n not in visited]
+        if not candidates:
+            break
+        current = min(candidates, key=lambda n: dist[n])
+        if dist[current] == float("inf"):
+            break
+        visited.add(current)
+        order.append(current)
+        for neighbor, weight in adjacency[current]:
+            candidate = dist[current] + int(weight)
+            if candidate < dist[neighbor]:
+                dist[neighbor] = candidate
+                prev[neighbor] = current
+
+    finite = {n: d for n, d in dist.items() if d != float("inf")}
+    return order, finite, prev
+
+
+def _dijkstra_target(
+    nodes: list[str],
+    dist: dict[str, int],
+    source: str,
+) -> str:
+    reachable = [n for n in nodes if n != source and n in dist]
+    if not reachable:
+        return source
+    return max(reachable, key=lambda n: dist[n])
+
+
+def _reconstruct_path(prev: dict[str, str], source: str, target: str) -> list[str]:
+    if target == source:
+        return [source]
+    path: list[str] = []
+    current = target
+    while current in prev:
+        path.append(current)
+        current = prev[current]
+    path.append(current)
+    path.reverse()
+    return path if path and path[0] == source else [source, target]
+
+
 def _plan_bubble_sort(ir: dict[str, Any]) -> AnimationPlan:
     values = _extract_array_values(ir) or list(DEFAULT_SORT_ARRAY)
     scenes: list[SceneAction] = [
@@ -703,11 +899,31 @@ def _plan_recursion(ir: dict[str, Any]) -> AnimationPlan:
 
 
 def _plan_graph_traversal(ir: dict[str, Any], kind: str) -> AnimationPlan:
-    nodes = ["A", "B", "C", "D"]
-    order = ["A", "B", "D", "C"] if kind == "BFS" else ["A", "B", "C", "D"]
+    source_code = ir.get("source_code") or ""
+    real = extract_graph(source_code, ir.get("language", ""))
+
+    if real is not None and real.get("edges"):
+        node_ids = list(real["nodes"])
+        weighted_edges = list(real["edges"])
+        source = real.get("source") or node_ids[0]
+    else:
+        node_ids = ["A", "B", "C", "D"]
+        weighted_edges = [("A", "B", 1), ("A", "C", 1), ("B", "D", 1), ("C", "D", 1)]
+        source = "A"
+
+    layout = compute_graph_layout(node_ids, weighted_edges)
+    layout_list = {node: list(layout[node]) for node in node_ids}
+
+    source = source if source in node_ids else node_ids[0]
+    order = (
+        _bfs_order(node_ids, weighted_edges, source)
+        if kind == "BFS"
+        else _dfs_order(node_ids, weighted_edges, source)
+    )
+
     scenes: list[SceneAction] = [
         SceneAction(action="show_title", text=f"Graph {kind}"),
-        SceneAction(action="show_graph", nodes=nodes),
+        SceneAction(action="show_graph", nodes=node_ids, layout=layout_list),
     ]
     for node in order:
         scenes.append(
@@ -720,6 +936,49 @@ def _plan_graph_traversal(ir: dict[str, Any], kind: str) -> AnimationPlan:
         data_structure="graph",
         scenes=scenes,
     )
+
+
+def _bfs_order(
+    nodes: list[str],
+    edges: list[tuple[str, str, Any]],
+    source: str,
+) -> list[str]:
+    adjacency: dict[str, list[str]] = {n: [] for n in nodes}
+    for u, v, _w in edges:
+        adjacency[u].append(v)
+        adjacency[v].append(u)
+    seen = {source}
+    queue = [source]
+    order = [source]
+    while queue:
+        current = queue.pop(0)
+        for neighbor in sorted(adjacency[current]):
+            if neighbor not in seen:
+                seen.add(neighbor)
+                queue.append(neighbor)
+                order.append(neighbor)
+    return order
+
+
+def _dfs_order(
+    nodes: list[str],
+    edges: list[tuple[str, str, Any]],
+    source: str,
+) -> list[str]:
+    adjacency: dict[str, list[str]] = {n: [] for n in nodes}
+    for u, v, _w in edges:
+        adjacency[u].append(v)
+        adjacency[v].append(u)
+    seen = set()
+
+    def visit(node: str) -> None:
+        seen.add(node)
+        for neighbor in sorted(adjacency[node]):
+            if neighbor not in seen:
+                visit(neighbor)
+
+    visit(source)
+    return list(seen)
 
 
 def _plan_graph_generic(ir: dict[str, Any]) -> AnimationPlan:

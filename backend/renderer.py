@@ -60,6 +60,8 @@ def _run_manim(scene_file: Path, scene_id: str) -> Path:
         command,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=600,
         cwd=str(SCENES_DIR),
     )

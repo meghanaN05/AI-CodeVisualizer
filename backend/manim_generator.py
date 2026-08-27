@@ -54,7 +54,7 @@ class CodeVisualization(Scene):
             elif action == "visit_node":
                 self._visit_node(step.get("node"), step.get("caption"))
             elif action == "show_graph":
-                self._show_graph(step.get("nodes", ["A", "B", "C", "D"]))
+                self._show_graph(step.get("nodes", ["A", "B", "C", "D"]), step.get("layout"))
             elif action == "show_variables":
                 self._show_variables(step.get("variables", {{}}), step.get("caption"))
             elif action == "push_stack":
@@ -77,6 +77,14 @@ class CodeVisualization(Scene):
                 self._heap_pop(step.get("label", ""), step.get("caption"))
             elif action == "show_method_flow":
                 self._show_method_flow(step.get("text", ""), step.get("caption"))
+            elif action == "show_weighted_graph":
+                self._show_weighted_graph(step.get("graph", {{}}), step.get("caption"))
+            elif action == "relax_edge":
+                self._relax_edge(step.get("from"), step.get("to"), step.get("weight"), step.get("caption"))
+            elif action == "update_distance":
+                self._update_distance(step.get("node"), step.get("distances", {{}}), step.get("label"), step.get("caption"))
+            elif action == "show_shortest_path":
+                self._show_shortest_path(step.get("path", []), step.get("graph", {{}}), step.get("caption"))
 
         self.wait(1)
 
@@ -264,13 +272,18 @@ class CodeVisualization(Scene):
             self.wait(0.4)
             self.play(FadeOut(check))
 
-    def _show_graph(self, nodes):
+    def _show_graph(self, nodes, layout=None):
         positions = {{
             "A": LEFT * 3 + UP * 1.5,
             "B": RIGHT * 3 + UP * 1.5,
             "C": LEFT * 3 + DOWN * 1.5,
             "D": RIGHT * 3 + DOWN * 1.5,
         }}
+        if layout:
+            positions = {{
+                str(name): RIGHT * float(pt[0]) + UP * float(pt[1])
+                for name, pt in layout.items()
+            }}
         edges = [("A", "B"), ("A", "C"), ("B", "D"), ("C", "D")]
         edge_group = VGroup()
         node_group = VGroup()
@@ -447,4 +460,105 @@ class CodeVisualization(Scene):
         self.play(FadeIn(group, scale=0.9))
         self.wait(0.7)
         self.play(FadeOut(group))
+
+    def _show_weighted_graph(self, graph, caption):
+        if caption:
+            self._show_caption(caption)
+        if getattr(self, "weighted_graph_group", None) in self.mobjects:
+            self.remove(self.weighted_graph_group)
+        nodes = graph.get("nodes", [])
+        edges = graph.get("edges", [])
+        layout = graph.get("layout", {{}})
+        self.graph_nodes = {{}}
+        self.graph_edges = {{}}
+        node_group = VGroup()
+        edge_group = VGroup()
+        weight_group = VGroup()
+
+        for n in nodes:
+            nid = str(n.get("id"))
+            label = str(n.get("label", nid))
+            pos = ORIGIN
+            pos_data = layout.get(nid)
+            if pos_data is not None:
+                pos = RIGHT * float(pos_data[0]) + UP * float(pos_data[1])
+            circle = Circle(radius=0.5, color=TEAL, fill_opacity=0.25)
+            text = Text(label, font_size=30, color=WHITE).move_to(circle.get_center())
+            node = VGroup(circle, text).move_to(pos)
+            self.graph_nodes[nid] = node
+            node_group.add(node)
+
+        for e in edges:
+            source = str(e.get("from"))
+            target = str(e.get("to"))
+            weight = e.get("weight")
+            if source not in self.graph_nodes or target not in self.graph_nodes:
+                continue
+            start = self.graph_nodes[source].get_center()
+            end = self.graph_nodes[target].get_center()
+            line = Line(start, end, color=GRAY_B, stroke_width=3)
+            edge_group.add(line)
+            mid = (start + end) / 2
+            weight_label = Text(str(weight), font_size=22, color=ORANGE).move_to(mid)
+            weight_group.add(weight_label)
+            info = {{"line": line, "label": weight_label, "mid": mid, "weight": weight}}
+            self.graph_edges[(source, target)] = info
+            self.graph_edges[(target, source)] = info
+
+        self.weighted_graph_group = VGroup(edge_group, weight_group, node_group)
+        self.play(
+            Create(edge_group),
+            LaggedStart(*[GrowFromCenter(n[0]) for n in node_group], lag_ratio=0.12),
+        )
+        self.play(LaggedStart(*[Write(n[1]) for n in node_group], lag_ratio=0.1))
+        self.play(FadeIn(weight_group))
+        self.wait(0.6)
+
+    def _relax_edge(self, source, target, weight, caption):
+        if caption:
+            self._show_caption(caption)
+        key = (str(source), str(target))
+        info = getattr(self, "graph_edges", {{}}).get(key)
+        if info:
+            line = info["line"]
+            self.play(line.animate.set_color(YELLOW).set_stroke(width=5))
+            self.wait(0.5)
+            self.play(line.animate.set_color(GRAY_B).set_stroke(width=3))
+        else:
+            self._show_caption(f"relax {{source}}→{{target}} (weight {{weight}})")
+
+    def _update_distance(self, node, distances, label, caption):
+        if caption:
+            self._show_caption(caption)
+        nid = str(node)
+        node_group = getattr(self, "graph_nodes", {{}}).get(nid)
+        if node_group is not None:
+            self.play(node_group[0].animate.set_color(GREEN).set_fill(GREEN, opacity=0.5))
+        dist_text = Text(f"dist[{{nid}}] = {{label}}", font_size=24, color=GREEN)
+        if node_group is not None:
+            dist_text.next_to(node_group, UP, buff=0.15)
+        else:
+            dist_text.to_edge(UP, buff=1.0)
+        self.play(FadeIn(dist_text))
+        self.wait(0.5)
+        self.play(FadeOut(dist_text))
+        if node_group is not None:
+            self.play(node_group[0].animate.set_color(TEAL).set_fill(TEAL, opacity=0.25))
+
+    def _show_shortest_path(self, path, graph, caption):
+        if caption:
+            self._show_caption(caption)
+        edges = getattr(self, "graph_edges", {{}})
+        unique_lines = {{}}
+        for i in range(len(path) - 1):
+            info = edges.get((str(path[i]), str(path[i + 1])))
+            if info:
+                unique_lines[id(info["line"])] = info["line"]
+        self.play(*[line.animate.set_color(GREEN).set_stroke(width=6) for line in unique_lines.values()])
+        for i, node in enumerate(path):
+            node_group = self.graph_nodes.get(str(node))
+            if node_group is not None:
+                self.play(node_group[0].animate.set_color(GREEN).set_fill(GREEN, opacity=0.6))
+        self.wait(1.0)
 '''
+

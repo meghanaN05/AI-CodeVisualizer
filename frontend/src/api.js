@@ -1,4 +1,4 @@
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8002";
+const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
 export async function generateVideo(code, language) {
   const response = await fetch(`${API_URL}/generate`, {

@@ -1,4 +1,11 @@
-"""Generate animation plans from IR using LLM or rule-based fallback."""
+"""Generate animation plans using an LLM 'thinker' or rule-based fallback.
+
+The LLM is treated as a PLANNER, never a Manim author. Given the real source
+code, it decides WHICH approach/applies (what structure, what algorithm) and
+emits a structured, validated DSL describing WHAT to show and in what order.
+The deterministic renderer later decides WHERE to place objects and HOW to
+animate them.
+"""
 
 from __future__ import annotations
 
@@ -9,48 +16,66 @@ from typing import Any
 from animation_planner import plan_from_ir
 from animation_schema import AnimationPlan, validate_animation_plan
 
-LLM_PROMPT = """You are an algorithm visualization planner.
-Given a program intermediate representation (IR), produce a JSON animation plan.
+LLM_PROMPT = """You are the PLANNING stage of a code-visualization compiler.
 
-The plan must follow this schema:
+You receive the user's real source code PLUS a shallow parse (IR).
+Your job is to:
+  1. Decide WHICH approach applies — the data structure(s) and algorithm(s)
+     at work (e.g. weighted graph + Dijkstra, binary tree + inorder, array +
+     bubble sort, hash map + heap, recursion, system design).
+  2. Extract the ACTUAL data the code operates on from the source code —
+     the real graph edges and weights, array values, tree, etc. If the data
+     is passed in as a parameter and never appears literally in the code, use
+     nil for that field rather than inventing numbers.
+  3. Emit ONLY the structured plan below (valid JSON, no markdown).
+
+The plan schema is:
 {
-  "algorithm": "string",
+  "approach": {
+    "data_structure": "graph | binary_tree | array | stack | queue | heap | hash_map | composite",
+    "algorithm": "dijkstra | bfs | dfs | inorder_traversal | binary_search | bubble_sort | ...",
+    "kind": "graph_problem | tree_problem | array_problem | design | recursion"
+  },
   "title": "string",
-  "data_structure": "array | binary_tree | graph | stack | queue",
   "description": "string",
-  "scenes": [
-    {"action": "show_title", "text": "..."},
-    {"action": "create_array", "values": [5, 2, 8]},
-    {"action": "highlight_index", "index": 0, "label": "i = 0", "caption": "..."},
-    {"action": "show_tree", "tree": {"value": 10, "left": {"value": 5}, "right": {"value": 20}}},
-    {"action": "highlight_node", "node": 10, "caption": "..."},
-    {"action": "move_pointer", "from": 10, "to": 5, "caption": "..."},
-    {"action": "visit_node", "node": 10, "caption": "..."},
-    {"action": "show_variables", "variables": {"low": 0, "high": 7, "mid": 3}},
-    {"action": "compare_indices", "index": 0, "label": "1"},
-    {"action": "swap_indices", "index": 0, "label": "1", "values": [2, 5, 8]},
-    {"action": "show_class_methods", "text": "Twitter", "nodes": ["postTweet", "getNewsFeed"]},
-    {"action": "show_hashmap", "text": "tweets", "values": [["user 1", "tweet list"]]},
-    {"action": "hashmap_insert", "text": "tweets", "label": "user 1 → (t, id)"},
-    {"action": "show_heap", "values": [["(t, id)", 10]]},
-    {"action": "heap_push", "label": "(t, id)"},
-    {"action": "heap_pop", "label": "tweetId"},
-    {"action": "show_method_flow", "text": "postTweet", "caption": "..."},
-    {"action": "show_graph", "nodes": ["A", "B", "C", "D"]},
-    {"action": "push_stack", "label": "fact(4)"},
-    {"action": "pop_stack", "label": "fact(4)"},
-    {"action": "show_caption", "text": "..."}
-  ]
+  "graph": {
+     "type": "graph",
+     "nodes": [{"id": "A", "label": "A"}],
+     "edges": [{"from": "A", "to": "B", "weight": 4}],
+     "layout": {"A": [-3, 1], "B": [3, 1]}
+  },
+  "scenes": [ ... scene actions ... ]
 }
 
-Rules:
-- Return ONLY valid JSON, no markdown.
-- Use only supported actions listed above.
-- Prefer concrete step-by-step scenes over vague descriptions.
-- For arrays, use values from IR when available.
-- For tree traversals, include show_tree then highlight/visit/move scenes.
+Supported scene actions (ONLY these):
+  {"action": "show_title", "text": "..."}
+  {"action": "show_weighted_graph", "graph": {...}, "caption": "..."}
+  {"action": "visit_node", "node": "A", "caption": "..."}
+  {"action": "relax_edge", "from": "A", "to": "B", "weight": 4, "caption": "..."}
+  {"action": "update_distance", "node": "B", "distances": {"A":0,"B":4}, "label":"4", "caption": "..."}
+  {"action": "show_shortest_path", "path": ["A","B"], "graph": {...}, "caption": "..."}
+  {"action": "create_array", "values": [5, 2, 8], "caption": "..."}
+  {"action": "highlight_index", "index": 0, "label": "i", "caption": "..."}
+  {"action": "show_tree", "tree": {"value": 10, "left": {...}}, "caption": "..."}
+  {"action": "highlight_node", "node": 10, "caption": "..."}
+  {"action": "push_stack", "label": "fact(4)", "caption": "..."}
+  {"action": "pop_stack", "label": "fact(4)", "caption": "..."}
+  {"action": "show_variables", "variables": {"low":0,"high":7}, "caption": "..."}
+  {"action": "show_caption", "text": "..."}
 
-IR:
+Rules:
+- Derive nodes/edges/weights/values from the REAL code. When data is absent
+  (only a parameter), set graph to null instead of fabricating values.
+- For a weighted graph, emit "show_weighted_graph" with the full graph object
+  (nodes, edges with weights). Do NOT emit a "show_graph" for weighted graphs.
+- Provide a step-by-step scene list that actually shows the algorithm running
+  on the extracted data (settle nodes, relax edges, update distances, etc.).
+- Return ONLY valid JSON.
+
+SOURCE CODE:
+{source_code}
+
+PARSED IR (shallow, may be partial):
 {ir_json}
 """
 
@@ -75,7 +100,10 @@ def _try_llm_plan(ir: dict[str, Any]) -> dict[str, Any] | None:
         return None
 
     client = OpenAI(api_key=api_key)
-    prompt = LLM_PROMPT.format(ir_json=json.dumps(ir, indent=2))
+    prompt = LLM_PROMPT.format(
+        source_code=ir.get("source_code", ""),
+        ir_json=json.dumps(ir, indent=2),
+    )
 
     try:
         response = client.chat.completions.create(
@@ -83,7 +111,7 @@ def _try_llm_plan(ir: dict[str, Any]) -> dict[str, Any] | None:
             messages=[
                 {
                     "role": "system",
-                    "content": "You output only valid JSON animation plans.",
+                    "content": "You are the planning stage of a code-to-visualization compiler. You output only valid JSON animation plans.",
                 },
                 {"role": "user", "content": prompt},
             ],
@@ -92,7 +120,52 @@ def _try_llm_plan(ir: dict[str, Any]) -> dict[str, Any] | None:
         )
         content = response.choices[0].message.content or "{}"
         data = json.loads(content)
-        plan = validate_animation_plan(data)
+        resolve = _resolve_plan(data, ir)
+        if resolve is None:
+            return None
+        plan = validate_animation_plan(resolve)
         return plan.to_dict()
     except Exception:
         return None
+
+
+def _resolve_plan(data: dict[str, Any], ir: dict[str, Any]) -> dict[str, Any] | None:
+    """Normalize the LLM's planned idea into the AnimationPlan shape.
+
+    Carries the LLM's chosen graph (and its nodes/edges) through to the
+    AnimationPlan top-level keys so the rule-based scene builder can act on
+    the same real data, and so the renderer receives node coordinates.
+    """
+    approach = data.get("approach") or {}
+    graph = data.get("graph")
+    scenes = data.get("scenes")
+
+    resolved: dict[str, Any] = {
+        "algorithm": approach.get("algorithm") or data.get("algorithm"),
+        "title": data.get("title", "Code Visualization"),
+        "data_structure": approach.get("data_structure") or data.get("data_structure"),
+        "kind": approach.get("kind") or data.get("kind"),
+        "description": data.get("description"),
+        "scenes": scenes or [],
+    }
+
+    if isinstance(graph, dict):
+        resolved["graph"] = graph
+
+    # If the LLM decided a weighted-graph approach but did not emit a
+    # show_weighted_graph scene, let the scene builder create one around the
+    # same graph so the renderer always sees the real data.
+    if graph and not any(
+        s.get("action") == "show_weighted_graph" for s in resolved["scenes"]
+    ):
+        resolved["scenes"].insert(
+            0,
+            {
+                "action": "show_weighted_graph",
+                "graph": graph,
+                "caption": "Weighted graph from your code",
+            },
+        )
+
+    return resolved
+

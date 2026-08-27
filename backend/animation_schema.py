@@ -20,6 +20,11 @@ class SceneAction(BaseModel):
     nodes: list[Any] | None = None
     variables: dict[str, Any] | None = None
     caption: str | None = None
+    graph: dict[str, Any] | None = None
+    layout: dict[str, Any] | None = None
+    weight: int | float | str | None = None
+    distances: dict[str, Any] | None = None
+    path: list[Any] | None = None
 
     model_config = {"populate_by_name": True}
 

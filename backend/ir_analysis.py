@@ -110,6 +110,13 @@ DESIGN_PATTERNS: dict[str, list[str]] = {
     "backtracking": [r"\bbacktrack\b", r"\bpermutations?\b", r"\bcombinations?\b"],
     "sliding_window": [r"\bsliding\s+window\b", r"\bwindowStart\b", r"\bwindowEnd\b"],
     "two_pointers": [r"\btwo\s+pointers\b", r"\bleft\s*=\s*0.*right"],
+    "dijkstra": [
+        r"\bDijkstra\b",
+        r"\bdijkstra\b",
+        r"\bshortest\s*path\b",
+        r"\bpriority_queue\b.*\bdistance\b",
+        r"\bdist\[\s*\]",
+    ],
 }
 
 
@@ -161,7 +168,9 @@ def _detect_all_structures(code: str) -> list[str]:
         if any(re.search(p, code, re.IGNORECASE) for p in patterns):
             structures.append(name)
 
-    if re.search(r"\bvector\s*<|\bArrayList\b|\blist\s*\[|\[\s*\]", code):
+    # A "bare []" is ambiguous (e.g. empty adjacency lists inside a graph
+    # literal), so only treat clearly-assigned list/vector values as arrays.
+    if re.search(r"\bvector\s*<|\bArrayList\b|\blist\s*\[|\b\w+\s*=\s*\[", code):
         if "array" not in structures:
             structures.append("array")
 
@@ -214,6 +223,8 @@ def _detect_algorithm(code: str, ir: dict[str, Any]) -> str | None:
         return "union_find"
     if "dynamic_programming" in concepts:
         return "dynamic_programming"
+    if "dijkstra" in concepts:
+        return "dijkstra"
     if "backtracking" in concepts:
         return "backtracking"
     if "heap" in (ir.get("data_structures") or []) and "hash_map" in (
