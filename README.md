@@ -1,11 +1,7 @@
 # AI Code Visualizer
-
 An AI-powered application that converts source code into animated visualizations and videos using **LLMs + program analysis + Manim**.
 
 The goal is to help students understand the execution and working of **data structures, algorithms, graphs, trees, recursion, sorting algorithms, and other programming concepts** through visual animations instead of only reading code.
-
----
-
 ## 🚀 Project Overview
 
 Traditional code explanations are mostly text-based. This project takes a different approach:
