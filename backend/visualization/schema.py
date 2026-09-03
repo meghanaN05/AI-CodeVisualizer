@@ -10,7 +10,6 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-
 ALLOWED_ACTIONS = frozenset(
     {
         "show_title",
@@ -83,6 +82,8 @@ class DslStep(BaseModel):
     distances: dict[str, Any] | None = None
     path: list[Any] | None = None
     nodes: list[Any] | None = None
+    edges: list[Any] | None = None
+    directed: bool | None = None
     tree: dict[str, Any] | None = None
     graph: dict[str, Any] | None = None
     component: str | None = None

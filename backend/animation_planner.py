@@ -5,7 +5,6 @@ from __future__ import annotations
 from typing import Any
 
 from animation_schema import AnimationPlan, SceneAction
-from graph_extractor import extract_graph
 from visualization.layout import compute_graph_layout
 
 DEFAULT_TREE: dict[str, Any] = {
@@ -158,7 +157,9 @@ def _plan_twitter_design(ir: dict[str, Any]) -> AnimationPlan:
                 caption=f"Method {method}() — core logic from your implementation",
             )
         )
-    scenes.append(SceneAction(action="show_caption", text=f"{class_name} visualization complete"))
+    scenes.append(
+        SceneAction(action="show_caption", text=f"{class_name} visualization complete")
+    )
     return AnimationPlan(
         algorithm="twitter_design",
         title=f"{class_name} Design",
@@ -209,10 +210,16 @@ def _plan_class_design(ir: dict[str, Any]) -> AnimationPlan:
         )
     if "array" in structures:
         scenes.append(
-            SceneAction(action="create_array", values=[1, 2, 3, 4, 5], caption="Array operations")
+            SceneAction(
+                action="create_array",
+                values=[1, 2, 3, 4, 5],
+                caption="Array operations",
+            )
         )
     if "binary_tree" in structures:
-        scenes.append(SceneAction(action="show_tree", tree=DEFAULT_TREE, caption="Tree structure"))
+        scenes.append(
+            SceneAction(action="show_tree", tree=DEFAULT_TREE, caption="Tree structure")
+        )
 
     for method in methods[:6]:
         scenes.append(
@@ -223,7 +230,9 @@ def _plan_class_design(ir: dict[str, Any]) -> AnimationPlan:
             )
         )
 
-    scenes.append(SceneAction(action="show_caption", text="Class-based DSA design complete"))
+    scenes.append(
+        SceneAction(action="show_caption", text="Class-based DSA design complete")
+    )
     return AnimationPlan(
         algorithm=ir.get("algorithm") or "class_design",
         title=f"{class_name} Design",
@@ -246,8 +255,18 @@ def _plan_hashmap(ir: dict[str, Any]) -> AnimationPlan:
             values=[["key 1", "10"], ["key 2", "20"], ["key 3", "30"]],
             caption="Hash map: O(1) average insert, lookup, delete",
         ),
-        SceneAction(action="hashmap_insert", text="map", label="key 4 → 40", caption="Insert key-value pair"),
-        SceneAction(action="hashmap_insert", text="map", label="lookup key 2", caption="Lookup returns 20"),
+        SceneAction(
+            action="hashmap_insert",
+            text="map",
+            label="key 4 → 40",
+            caption="Insert key-value pair",
+        ),
+        SceneAction(
+            action="hashmap_insert",
+            text="map",
+            label="lookup key 2",
+            caption="Lookup returns 20",
+        ),
     ]
     return AnimationPlan(
         algorithm="hash_map",
@@ -279,10 +298,28 @@ def _plan_heap(ir: dict[str, Any]) -> AnimationPlan:
 def _plan_lru_cache(ir: dict[str, Any]) -> AnimationPlan:
     scenes: list[SceneAction] = [
         SceneAction(action="show_title", text="LRU Cache"),
-        SceneAction(action="show_hashmap", text="cache", values=[["key 1", "val A"], ["key 2", "val B"]], caption="Hash map for O(1) access"),
-        SceneAction(action="show_graph", nodes=["MRU", "key2", "key1", "LRU"], caption="Doubly linked list for eviction order"),
-        SceneAction(action="hashmap_insert", text="cache", label="get(1)", caption="Move accessed node to front (MRU)"),
-        SceneAction(action="heap_pop", label="evict LRU", caption="Evict least recently used when capacity exceeded"),
+        SceneAction(
+            action="show_hashmap",
+            text="cache",
+            values=[["key 1", "val A"], ["key 2", "val B"]],
+            caption="Hash map for O(1) access",
+        ),
+        SceneAction(
+            action="show_graph",
+            nodes=["MRU", "key2", "key1", "LRU"],
+            caption="Doubly linked list for eviction order",
+        ),
+        SceneAction(
+            action="hashmap_insert",
+            text="cache",
+            label="get(1)",
+            caption="Move accessed node to front (MRU)",
+        ),
+        SceneAction(
+            action="heap_pop",
+            label="evict LRU",
+            caption="Evict least recently used when capacity exceeded",
+        ),
     ]
     return AnimationPlan(
         algorithm="lru_cache",
@@ -295,8 +332,15 @@ def _plan_lru_cache(ir: dict[str, Any]) -> AnimationPlan:
 def _plan_trie(ir: dict[str, Any]) -> AnimationPlan:
     scenes: list[SceneAction] = [
         SceneAction(action="show_title", text="Trie Visualization"),
-        SceneAction(action="show_tree", tree={"value": "root", "left": {"value": "a"}, "right": {"value": "b"}}, caption="Prefix tree for strings"),
-        SceneAction(action="show_caption", text="Insert and search prefixes character by character"),
+        SceneAction(
+            action="show_tree",
+            tree={"value": "root", "left": {"value": "a"}, "right": {"value": "b"}},
+            caption="Prefix tree for strings",
+        ),
+        SceneAction(
+            action="show_caption",
+            text="Insert and search prefixes character by character",
+        ),
     ]
     return AnimationPlan(
         algorithm="trie",
@@ -309,9 +353,19 @@ def _plan_trie(ir: dict[str, Any]) -> AnimationPlan:
 def _plan_union_find(ir: dict[str, Any]) -> AnimationPlan:
     scenes: list[SceneAction] = [
         SceneAction(action="show_title", text="Union-Find (Disjoint Set)"),
-        SceneAction(action="show_graph", nodes=["0", "1", "2", "3"], caption="Connected components"),
-        SceneAction(action="visit_node", node="0", caption="find(0): locate root with path compression"),
-        SceneAction(action="visit_node", node="1", caption="union(0,1): merge two sets"),
+        SceneAction(
+            action="show_graph",
+            nodes=["0", "1", "2", "3"],
+            caption="Connected components",
+        ),
+        SceneAction(
+            action="visit_node",
+            node="0",
+            caption="find(0): locate root with path compression",
+        ),
+        SceneAction(
+            action="visit_node", node="1", caption="union(0,1): merge two sets"
+        ),
     ]
     return AnimationPlan(
         algorithm="union_find",
@@ -324,8 +378,15 @@ def _plan_union_find(ir: dict[str, Any]) -> AnimationPlan:
 def _plan_dynamic_programming(ir: dict[str, Any]) -> AnimationPlan:
     scenes: list[SceneAction] = [
         SceneAction(action="show_title", text="Dynamic Programming"),
-        SceneAction(action="create_array", values=[0, 1, 1, 2, 3, 5, 8], caption="DP table building bottom-up"),
-        SceneAction(action="show_caption", text="Each cell depends on previously computed subproblems"),
+        SceneAction(
+            action="create_array",
+            values=[0, 1, 1, 2, 3, 5, 8],
+            caption="DP table building bottom-up",
+        ),
+        SceneAction(
+            action="show_caption",
+            text="Each cell depends on previously computed subproblems",
+        ),
     ]
     return AnimationPlan(
         algorithm="dynamic_programming",
@@ -414,7 +475,9 @@ def _plan_inorder(ir: dict[str, Any]) -> AnimationPlan:
         (10, "Return to root"),
         (20, "Visit right subtree"),
     ]
-    return _plan_tree_traversal(ir, "Inorder Traversal", tree, path, "inorder_traversal")
+    return _plan_tree_traversal(
+        ir, "Inorder Traversal", tree, path, "inorder_traversal"
+    )
 
 
 def _plan_preorder(ir: dict[str, Any]) -> AnimationPlan:
@@ -426,7 +489,9 @@ def _plan_preorder(ir: dict[str, Any]) -> AnimationPlan:
         (7, "Visit right child of 5"),
         (20, "Visit right subtree"),
     ]
-    return _plan_tree_traversal(ir, "Preorder Traversal", tree, path, "preorder_traversal")
+    return _plan_tree_traversal(
+        ir, "Preorder Traversal", tree, path, "preorder_traversal"
+    )
 
 
 def _plan_postorder(ir: dict[str, Any]) -> AnimationPlan:
@@ -438,7 +503,9 @@ def _plan_postorder(ir: dict[str, Any]) -> AnimationPlan:
         (20, "Visit right subtree"),
         (10, "Visit root last"),
     ]
-    return _plan_tree_traversal(ir, "Postorder Traversal", tree, path, "postorder_traversal")
+    return _plan_tree_traversal(
+        ir, "Postorder Traversal", tree, path, "postorder_traversal"
+    )
 
 
 def _plan_tree_traversal(
@@ -457,12 +524,15 @@ def _plan_tree_traversal(
     for node, caption in path:
         if previous is not None and previous != node:
             scenes.append(
-                SceneAction(action="move_pointer", **{"from": previous, "to": node, "caption": caption})
+                SceneAction(
+                    action="move_pointer",
+                    **{"from": previous, "to": node, "caption": caption},
+                )
             )
+        scenes.append(SceneAction(action="highlight_node", node=node, caption=caption))
         scenes.append(
-            SceneAction(action="highlight_node", node=node, caption=caption)
+            SceneAction(action="visit_node", node=node, caption=f"Visited {node}")
         )
-        scenes.append(SceneAction(action="visit_node", node=node, caption=f"Visited {node}"))
         previous = node
 
     scenes.append(SceneAction(action="show_caption", text=f"{title} complete"))
@@ -555,10 +625,7 @@ DIJKSTRA_GRAPH: dict[str, Any] = {
 
 
 def _plan_dijkstra(ir: dict[str, Any]) -> AnimationPlan:
-    source_code = ir.get("source_code") or ""
-
-    # Derive the ACTUAL graph the user wrote, if present.
-    real = extract_graph(source_code, ir.get("language", ""))
+    real = _get_extracted_graph(ir)
     if real is not None and real.get("edges"):
         node_ids = list(real["nodes"])
         weighted_edges = list(real["edges"])
@@ -578,12 +645,10 @@ def _plan_dijkstra(ir: dict[str, Any]) -> AnimationPlan:
 
     graph_dsl = {
         "type": "graph",
-        "nodes": [{"id": node, "label": node} for node in node_ids],
-        "edges": [
-            {"from": u, "to": v, "weight": w}
-            for u, v, w in weighted_edges
-        ],
+        "nodes": list(node_ids),
+        "edges": [{"from": u, "to": v, "weight": w} for u, v, w in weighted_edges],
         "layout": layout_list,
+        "directed": bool(real.get("directed")) if real else False,
     }
 
     order, distances, _prev = _run_dijkstra(node_ids, weighted_edges, source)
@@ -592,8 +657,11 @@ def _plan_dijkstra(ir: dict[str, Any]) -> AnimationPlan:
     scenes: list[SceneAction] = [
         SceneAction(action="show_title", text="Dijkstra's Shortest Path"),
         SceneAction(
-            action="show_weighted_graph",
-            graph=graph_dsl,
+            action="show_graph",
+            nodes=graph_dsl["nodes"],
+            edges=graph_dsl["edges"],
+            directed=graph_dsl["directed"],
+            layout=graph_dsl["layout"],
             caption=f"Weighted {source_label} — find shortest path from {source} to every node",
         ),
         SceneAction(
@@ -613,9 +681,7 @@ def _plan_dijkstra(ir: dict[str, Any]) -> AnimationPlan:
             )
         )
         node_edges = [
-            (u, v, w)
-            for u, v, w in weighted_edges
-            if (u == node or v == node)
+            (u, v, w) for u, v, w in weighted_edges if (u == node or v == node)
         ]
         node_edges.sort(key=lambda e: e[2])
         for u, v, w in node_edges:
@@ -638,7 +704,10 @@ def _plan_dijkstra(ir: dict[str, Any]) -> AnimationPlan:
                     SceneAction(
                         action="update_distance",
                         node=neighbor,
-                        distances={n: ("∞" if n not in dist_ready else dist_ready[n]) for n in node_ids},
+                        distances={
+                            n: ("∞" if n not in dist_ready else dist_ready[n])
+                            for n in node_ids
+                        },
                         label=str(new_dist),
                         caption=f"dist[{neighbor}] = {new_dist}",
                     )
@@ -658,7 +727,8 @@ def _plan_dijkstra(ir: dict[str, Any]) -> AnimationPlan:
     scenes.append(
         SceneAction(
             action="show_caption",
-            text="Final distances: " + ", ".join(f"{n}={dist_ready.get(n, '∞')}" for n in node_ids),
+            text="Final distances: "
+            + ", ".join(f"{n}={dist_ready.get(n, '∞')}" for n in node_ids),
         )
     )
 
@@ -848,7 +918,9 @@ def _plan_insertion_sort(ir: dict[str, Any]) -> AnimationPlan:
             )
         arr[j + 1] = key
         scenes.append(
-            SceneAction(action="create_array", values=list(arr), caption=f"Insert {key}")
+            SceneAction(
+                action="create_array", values=list(arr), caption=f"Insert {key}"
+            )
         )
 
     scenes.append(SceneAction(action="show_caption", text="Insertion sort complete"))
@@ -899,8 +971,7 @@ def _plan_recursion(ir: dict[str, Any]) -> AnimationPlan:
 
 
 def _plan_graph_traversal(ir: dict[str, Any], kind: str) -> AnimationPlan:
-    source_code = ir.get("source_code") or ""
-    real = extract_graph(source_code, ir.get("language", ""))
+    real = _get_extracted_graph(ir)
 
     if real is not None and real.get("edges"):
         node_ids = list(real["nodes"])
@@ -923,7 +994,13 @@ def _plan_graph_traversal(ir: dict[str, Any], kind: str) -> AnimationPlan:
 
     scenes: list[SceneAction] = [
         SceneAction(action="show_title", text=f"Graph {kind}"),
-        SceneAction(action="show_graph", nodes=node_ids, layout=layout_list),
+        SceneAction(
+            action="show_graph",
+            nodes=node_ids,
+            edges=[[u, v] for u, v, _w in weighted_edges],
+            directed=bool(real.get("directed")) if real else False,
+            layout=layout_list,
+        ),
     ]
     for node in order:
         scenes.append(
@@ -983,6 +1060,11 @@ def _dfs_order(
 
 def _plan_graph_generic(ir: dict[str, Any]) -> AnimationPlan:
     return _plan_graph_traversal(ir, "BFS")
+
+
+def _get_extracted_graph(ir: dict[str, Any]) -> dict[str, Any] | None:
+    graph = ir.get("extracted_graph")
+    return graph if isinstance(graph, dict) else None
 
 
 def _plan_generic(ir: dict[str, Any]) -> AnimationPlan:

@@ -166,15 +166,61 @@ def _to_weight(value: Any) -> Any:
 # C++ / Java / JavaScript (best-effort)
 # --------------------------------------------------------------------------- #
 def _extract_cpp(code: str) -> dict[str, Any] | None:
-    return _extract_imperative(code)
+    return _extract_brace_or_list_adjacency(code) or _extract_imperative(code)
 
 
 def _extract_java(code: str) -> dict[str, Any] | None:
-    return _extract_imperative(code)
+    return _extract_brace_or_list_adjacency(code) or _extract_imperative(code)
 
 
 def _extract_javascript(code: str) -> dict[str, Any] | None:
-    return _extract_imperative(code)
+    return _extract_brace_or_list_adjacency(code) or _extract_imperative(code)
+
+
+def _extract_brace_or_list_adjacency(code: str) -> dict[str, Any] | None:
+    """Parse inline adjacency-list literals such as:
+
+    C++: vector<vector<int>> graph = {{1, 2}, {0, 3}, {0}, {1}};
+    Java: int[][] graph = {{1, 2}, {0, 3}, {0}, {1}};
+    JS:   const graph = [[1, 2], [0, 3], [0], [1]];
+
+    Interprets the outer index as the node id and inner values as neighbors.
+    If the literal is symmetric, duplicate undirected edges are collapsed.
+    """
+    match = re.search(
+        r"\b(?:graph|adj|adjacency)\w*\b\s*=\s*(\{\s*\{|\[\s*\[)",
+        code,
+        re.IGNORECASE,
+    )
+    if not match:
+        return None
+
+    start = match.start(1)
+    literal = _extract_nested_literal(code, start)
+    if not literal:
+        return None
+
+    rows = _parse_nested_numeric_rows(literal)
+    if rows is None:
+        return None
+
+    nodes = [str(i) for i in range(len(rows))]
+    raw_edges: list[tuple[str, str, Any]] = []
+    for u, neighbors in enumerate(rows):
+        for v in neighbors:
+            raw_edges.append((str(u), str(v), 1))
+
+    edges = _dedupe_undirected_if_symmetric(raw_edges)
+    if not nodes and not edges:
+        return None
+
+    out_nodes = {u for u, _v, _w in edges}
+    source = (
+        nodes[0]
+        if nodes and nodes[0] in out_nodes
+        else (next(iter(out_nodes), nodes[0] if nodes else None))
+    )
+    return {"nodes": nodes, "edges": edges, "source": source}
 
 
 def _extract_imperative(code: str) -> dict[str, Any] | None:
@@ -211,7 +257,9 @@ def _extract_imperative(code: str) -> dict[str, Any] | None:
         u = match.group(2).strip("\"'")
         nodes.add(u)
         body = match.group(3)
-        for inner in re.finditer(r"\(\s*([\"']?[A-Za-z_]\w*[\"']?)\s*,\s*([0-9.]+)\s*\)", body):
+        for inner in re.finditer(
+            r"\(\s*([\"']?[A-Za-z_]\w*[\"']?)\s*,\s*([0-9.]+)\s*\)", body
+        ):
             v = inner.group(1).strip("\"'")
             w = _to_weight(inner.group(2))
             nodes.add(v)
@@ -222,5 +270,73 @@ def _extract_imperative(code: str) -> dict[str, Any] | None:
 
     node_list = sorted(nodes)
     out_nodes = {u for u, _v, _w in edges}
-    source = node_list[0] if node_list[0] in out_nodes else (next(iter(out_nodes), None))
+    source = (
+        node_list[0] if node_list[0] in out_nodes else (next(iter(out_nodes), None))
+    )
     return {"nodes": node_list, "edges": edges, "source": source}
+
+
+def _extract_nested_literal(code: str, start: int) -> str | None:
+    opening = code[start]
+    closing = "}" if opening == "{" else "]"
+    depth = 0
+
+    for index in range(start, len(code)):
+        char = code[index]
+        if char == opening:
+            depth += 1
+        elif char == closing:
+            depth -= 1
+            if depth == 0:
+                return code[start : index + 1]
+    return None
+
+
+def _parse_nested_numeric_rows(literal: str) -> list[list[int]] | None:
+    translated = literal.replace("{", "[").replace("}", "]")
+    try:
+        value = ast.literal_eval(translated)
+    except (SyntaxError, ValueError):
+        return None
+
+    if not isinstance(value, list):
+        return None
+
+    rows: list[list[int]] = []
+    for row in value:
+        if not isinstance(row, list):
+            return None
+        parsed_row: list[int] = []
+        for item in row:
+            if isinstance(item, bool):
+                return None
+            if isinstance(item, int):
+                parsed_row.append(item)
+            elif isinstance(item, float) and item.is_integer():
+                parsed_row.append(int(item))
+            else:
+                return None
+        rows.append(parsed_row)
+    return rows
+
+
+def _dedupe_undirected_if_symmetric(
+    edges: list[tuple[str, str, Any]],
+) -> list[tuple[str, str, Any]]:
+    if not edges:
+        return edges
+
+    edge_pairs = {(u, v) for u, v, _w in edges}
+    is_symmetric = all((v, u) in edge_pairs for u, v, _w in edges)
+    if not is_symmetric:
+        return edges
+
+    deduped: list[tuple[str, str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for u, v, w in edges:
+        key = tuple(sorted((u, v)))
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append((key[0], key[1], w))
+    return deduped

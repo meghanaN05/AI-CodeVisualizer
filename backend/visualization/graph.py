@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from graph_extractor import extract_graph
+
 from visualization.schema import (
     Chapter,
     DslEdge,
@@ -42,15 +43,15 @@ def plan_dijkstra(ir: dict[str, Any]) -> VisualizationDocument:
     order, dist_ready, prev = _run_dijkstra(node_ids, weighted_edges, source)
 
     nodes = [DslNode(id=n, label=n) for n in node_ids]
-    edges = [
-        DslEdge(**{"from": u, "to": v, "weight": w}) for u, v, w in weighted_edges
-    ]
+    edges = [DslEdge(**{"from": u, "to": v, "weight": w}) for u, v, w in weighted_edges]
 
     steps: list[DslStep] = [
         DslStep(action="show_title", text="Dijkstra's Shortest Path"),
         DslStep(
-            action="show_weighted_graph",
+            action="show_graph",
             caption=f"Weighted {source_label} — shortest paths from {source}",
+            nodes=node_ids,
+            edges=[{"from": u, "to": v, "weight": w} for u, v, w in weighted_edges],
         ),
         DslStep(
             action="show_variables",
@@ -108,7 +109,8 @@ def plan_dijkstra(ir: dict[str, Any]) -> VisualizationDocument:
     steps.append(
         DslStep(
             action="show_caption",
-            text="Distances: " + ", ".join(f"{n}={working.get(n, '∞')}" for n in node_ids),
+            text="Distances: "
+            + ", ".join(f"{n}={working.get(n, '∞')}" for n in node_ids),
         )
     )
 
@@ -146,12 +148,19 @@ def plan_traversal(ir: dict[str, Any], kind: str) -> VisualizationDocument:
         weighted_edges = [("A", "B", 1), ("A", "C", 1), ("B", "D", 1), ("C", "D", 1)]
         source = "A"
 
-    order = _bfs(node_ids, weighted_edges, source) if kind == "BFS" else _dfs(
-        node_ids, weighted_edges, source
+    order = (
+        _bfs(node_ids, weighted_edges, source)
+        if kind == "BFS"
+        else _dfs(node_ids, weighted_edges, source)
     )
     steps = [
         DslStep(action="show_title", text=f"Graph {kind}"),
-        DslStep(action="show_graph", caption=f"{kind} starting at {source}"),
+        DslStep(
+            action="show_graph",
+            caption=f"{kind} starting at {source}",
+            nodes=node_ids,
+            edges=[{"from": u, "to": v} for u, v, _w in weighted_edges],
+        ),
     ]
     for node in order:
         steps.append(DslStep(action="visit", node=node, caption=f"Visit {node}"))
@@ -164,7 +173,9 @@ def plan_traversal(ir: dict[str, Any], kind: str) -> VisualizationDocument:
         title=f"Graph {kind}",
         data_structure="graph",
         nodes=[DslNode(id=n, label=n) for n in node_ids],
-        edges=[DslEdge(**{"from": u, "to": v, "weight": w}) for u, v, w in weighted_edges],
+        edges=[
+            DslEdge(**{"from": u, "to": v, "weight": w}) for u, v, w in weighted_edges
+        ],
         steps=steps,
         chapters=[Chapter(id="main", title=f"Graph {kind}", steps=steps)],
     )

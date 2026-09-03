@@ -49,6 +49,7 @@ The plan schema is:
 
 Supported scene actions (ONLY these):
   {"action": "show_title", "text": "..."}
+  {"action": "show_graph", "nodes": ["A", "B"], "edges": [{"from": "A", "to": "B", "weight": 4}], "directed": false, "layout": {"A": [-3, 1], "B": [3, 1]}, "caption": "..."}
   {"action": "show_weighted_graph", "graph": {...}, "caption": "..."}
   {"action": "visit_node", "node": "A", "caption": "..."}
   {"action": "relax_edge", "from": "A", "to": "B", "weight": 4, "caption": "..."}
@@ -66,8 +67,9 @@ Supported scene actions (ONLY these):
 Rules:
 - Derive nodes/edges/weights/values from the REAL code. When data is absent
   (only a parameter), set graph to null instead of fabricating values.
-- For a weighted graph, emit "show_weighted_graph" with the full graph object
-  (nodes, edges with weights). Do NOT emit a "show_graph" for weighted graphs.
+- For all new graph scenes, emit "show_graph" with nodes, edges, directed,
+  and optional edge weights. Use "show_weighted_graph" only for legacy
+  compatibility if you must preserve an existing scene shape.
 - Provide a step-by-step scene list that actually shows the algorithm running
   on the extracted data (settle nodes, relax edges, update distances, etc.).
 - Return ONLY valid JSON.
@@ -152,20 +154,22 @@ def _resolve_plan(data: dict[str, Any], ir: dict[str, Any]) -> dict[str, Any] | 
     if isinstance(graph, dict):
         resolved["graph"] = graph
 
-    # If the LLM decided a weighted-graph approach but did not emit a
-    # show_weighted_graph scene, let the scene builder create one around the
-    # same graph so the renderer always sees the real data.
+    # Canonicalize new graph output onto show_graph so weighted and
+    # unweighted graphs share the same planner/scene contract.
     if graph and not any(
-        s.get("action") == "show_weighted_graph" for s in resolved["scenes"]
+        s.get("action") in {"show_graph", "show_weighted_graph"}
+        for s in resolved["scenes"]
     ):
         resolved["scenes"].insert(
             0,
             {
-                "action": "show_weighted_graph",
-                "graph": graph,
-                "caption": "Weighted graph from your code",
+                "action": "show_graph",
+                "nodes": graph.get("nodes", []),
+                "edges": graph.get("edges", []),
+                "directed": graph.get("directed", False),
+                "layout": graph.get("layout", {}),
+                "caption": "Graph from your code",
             },
         )
 
     return resolved
-

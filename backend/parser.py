@@ -5,11 +5,11 @@ from __future__ import annotations
 from typing import Any
 
 from cpp_parser import parse_cpp
+from graph_extractor import extract_graph
 from ir_analysis import enrich_ir
 from java_parser import parse_java
 from javascript_parser import parse_javascript
 from python_parser import parse_python
-
 
 SUPPORTED_LANGUAGES = {
     "cpp",
@@ -26,18 +26,18 @@ def parse_code(code: str, language: str) -> dict[str, Any]:
     normalized = language.strip().lower()
 
     if normalized in {"cpp", "c++", "c"}:
-        return parse_cpp(code)
+        ir = parse_cpp(code)
+    elif normalized == "python":
+        ir = parse_python(code)
+    elif normalized in {"javascript", "js"}:
+        ir = parse_javascript(code)
+    elif normalized == "java":
+        ir = parse_java(code)
+    else:
+        ir = enrich_ir(fallback_ir(code, normalized), code, normalized)
 
-    if normalized == "python":
-        return parse_python(code)
-
-    if normalized in {"javascript", "js"}:
-        return parse_javascript(code)
-
-    if normalized == "java":
-        return parse_java(code)
-
-    return enrich_ir(fallback_ir(code, normalized), code, normalized)
+    ir["extracted_graph"] = extract_graph(code, normalized)
+    return ir
 
 
 def fallback_ir(code: str, language: str) -> dict[str, Any]:
