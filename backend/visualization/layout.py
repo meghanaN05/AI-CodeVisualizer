@@ -27,6 +27,102 @@ NODE_RADIUS = 0.5
 MIN_NODE_SEPARATION = NODE_RADIUS + 0.25
 
 
+def compute_tree_layout(tree: dict[str, Any] | None) -> dict[str, tuple[float, float]]:
+    """Recursive tidy-tree layout: x from subtree width, y from depth."""
+    if not tree or "value" not in tree:
+        return {}
+
+    positions: dict[str, tuple[float, float]] = {}
+    _layout_tree_node(tree, x=0.0, y=2.2, spread=3.2, positions=positions)
+    positions = _scale_to_canvas(positions, len(positions))
+    return _reflow(positions)
+
+
+def _layout_tree_node(
+    node: dict[str, Any],
+    x: float,
+    y: float,
+    spread: float,
+    positions: dict[str, tuple[float, float]],
+) -> None:
+    key = str(node["value"])
+    positions[key] = (x, y)
+    left = node.get("left")
+    right = node.get("right")
+    child_spread = max(spread / 1.8, 1.1)
+    if left and "value" in left:
+        _layout_tree_node(left, x - spread, y - 1.7, child_spread, positions)
+    if right and "value" in right:
+        _layout_tree_node(right, x + spread, y - 1.7, child_spread, positions)
+
+
+def compute_architecture_layout(
+    components: list[dict[str, Any]] | list[str],
+) -> dict[str, tuple[float, float]]:
+    """Layered top-to-bottom architecture. Category determines row."""
+
+    layer_order = ["client", "gateway", "service", "queue", "cache", "database", "other"]
+    buckets: dict[str, list[str]] = {name: [] for name in layer_order}
+
+    ids: list[tuple[str, str]] = []
+    for item in components:
+        if isinstance(item, dict):
+            cid = str(item.get("id") or item.get("label") or "")
+            cat = str(item.get("category") or "other")
+        else:
+            cid = str(item)
+            cat = "other"
+        if not cid:
+            continue
+        if cat not in buckets:
+            cat = "other"
+        buckets[cat].append(cid)
+        ids.append((cid, cat))
+
+    positions: dict[str, tuple[float, float]] = {}
+    used_layers = [layer for layer in layer_order if buckets[layer]]
+    if not used_layers:
+        return positions
+
+    top = 3.0
+    bottom = -2.6
+    span = top - bottom
+    for li, layer in enumerate(used_layers):
+        y = top - (span * li / max(len(used_layers) - 1, 1))
+        names = buckets[layer]
+        count = len(names)
+        width = min(10.0, 2.8 * max(count - 1, 0) + 0.1)
+        start = -width / 2
+        for i, name in enumerate(names):
+            x = start + (width * i / max(count - 1, 1) if count > 1 else 0.0)
+            positions[name] = (x, y)
+
+    return _reflow(positions)
+
+
+def apply_layout(doc: Any) -> Any:
+    """Fill doc.layout from domain-specific engines. Never trust planner coords."""
+    from visualization.schema import VisualizationDocument
+
+    if not isinstance(doc, VisualizationDocument):
+        return doc
+
+    if doc.type == "graph" or doc.domain == "graph":
+        node_ids = [n.id for n in doc.nodes]
+        edges = [(e.from_id, e.to_id, e.weight) for e in doc.edges]
+        coords = compute_graph_layout(node_ids, edges)
+        doc.layout = {k: [v[0], v[1]] for k, v in coords.items()}
+    elif doc.type == "tree" or doc.domain == "tree":
+        coords = compute_tree_layout(doc.tree)
+        doc.layout = {k: [v[0], v[1]] for k, v in coords.items()}
+    elif doc.type == "architecture" or doc.domain == "system_design":
+        coords = compute_architecture_layout(
+            [{"id": c.id, "category": c.category} for c in doc.components]
+        )
+        doc.layout = {k: [v[0], v[1]] for k, v in coords.items()}
+    return doc
+
+
 def compute_graph_layout(
     nodes: list[str],
     edges: list[tuple[str, str, Any]],
