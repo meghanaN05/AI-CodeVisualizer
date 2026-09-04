@@ -10,6 +10,7 @@ from ir_analysis import enrich_ir
 from java_parser import parse_java
 from javascript_parser import parse_javascript
 from python_parser import parse_python
+from tree_extractor import extract_tree
 
 SUPPORTED_LANGUAGES = {
     "cpp",
@@ -37,6 +38,7 @@ def parse_code(code: str, language: str) -> dict[str, Any]:
         ir = enrich_ir(fallback_ir(code, normalized), code, normalized)
 
     ir["extracted_graph"] = extract_graph(code, normalized)
+    ir["extracted_tree"] = extract_tree(code, normalized)
     return ir
 
 

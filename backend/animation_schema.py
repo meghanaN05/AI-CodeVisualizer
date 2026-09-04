@@ -75,7 +75,9 @@ def _normalize_scene(scene: dict[str, Any]) -> dict[str, Any]:
 
 
 def _normalize_legacy_weighted_graph_scene(scene: dict[str, Any]) -> dict[str, Any]:
-    graph = scene.get("graph") if isinstance(scene.get("graph"), dict) else scene
+    nested = scene.get("graph")
+    graph: dict[str, Any] = nested if isinstance(nested, dict) else scene
+
     normalized = {
         key: value
         for key, value in scene.items()

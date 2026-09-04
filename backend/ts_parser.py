@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import ast
 import re
 from typing import Any, Callable
 
+from ir_analysis import enrich_ir
 from tree_sitter import Language, Node, Parser, Tree
 
-from ir_analysis import enrich_ir
+_ARRAY_LITERAL_RE = re.compile(r"\b(\w+)\s*(?:\[[^\]]*\])?\s*=\s*(\{|\[)")
 
 METHOD_NODE_TYPES = frozenset(
     {
@@ -100,9 +102,18 @@ class TreeSitterParser:
             self._parse_call(node)
         elif node.type in ("field_expression", "member_expression", "field_access"):
             self._parse_field_access(node)
-        elif node.type in ("subscript_expression", "element_access_expression", "array_access"):
+        elif node.type in (
+            "subscript_expression",
+            "element_access_expression",
+            "array_access",
+        ):
             self._parse_subscript(node)
-        elif node.type in ("variable_declaration", "declaration", "local_variable_declaration"):
+        elif node.type in (
+            "variable_declaration",
+            "lexical_declaration",
+            "declaration",
+            "local_variable_declaration",
+        ):
             self._parse_declaration(node)
 
         for child in node.children:
@@ -400,8 +411,69 @@ class TreeSitterParser:
             elif not self._current_function:
                 self.global_variables.append(var)
 
+        self._try_extract_array_literal(text, node)
+
+    def _try_extract_array_literal(self, text: str, node: Node) -> None:
+        """Best-effort real array extraction for Java/JS declarations, e.g.
+        `int[] arr = {5, 2, 8, 1};` or `const nums = [5, 2, 8, 1];` — so
+        real literal values flow into the IR instead of nothing at all.
+        """
+        match = _ARRAY_LITERAL_RE.search(text)
+        if not match:
+            return
+
+        name = match.group(1)
+        opening_pos = match.start(2)
+        opening = text[opening_pos]
+        closing = "}" if opening == "{" else "]"
+        depth = 0
+        literal = None
+        for index in range(opening_pos, len(text)):
+            char = text[index]
+            if char == opening:
+                depth += 1
+            elif char == closing:
+                depth -= 1
+                if depth == 0:
+                    literal = text[opening_pos : index + 1]
+                    break
+        if literal is None:
+            return
+
+        translated = literal.replace("{", "[").replace("}", "]")
+        translated = re.sub(r"\bnull\b", "None", translated)
+        try:
+            value = ast.literal_eval(translated)
+        except (ValueError, SyntaxError):
+            return
+        if not isinstance(value, list) or not value:
+            return
+        if any(isinstance(item, list) for item in value):
+            return
+
+        if not any(item["name"] == name for item in self.arrays):
+            self.arrays.append(
+                {
+                    "name": name,
+                    "type": "array",
+                    "scope": "local" if self._current_function else "global",
+                    "size": len(value),
+                    "initializer": value,
+                    "line": self._line(node),
+                }
+            )
+
     def _find_identifier(self, node: Node) -> Node | None:
-        skip = {"class", "public", "private", "protected", "static", "void", "int", "async"}
+        skip = {
+            "class",
+            "public",
+            "private",
+            "protected",
+            "static",
+            "void",
+            "int",
+            "async",
+        }
         for child in node.children:
             if child.type == "identifier":
                 text = self._text(child)
@@ -416,13 +488,22 @@ class TreeSitterParser:
 
     def _find_class_body(self, node: Node) -> Node | None:
         for child in node.children:
-            if child.type in ("class_body", "declaration_list", "field_declaration_list"):
+            if child.type in (
+                "class_body",
+                "declaration_list",
+                "field_declaration_list",
+            ):
                 return child
         return None
 
     def _find_body(self, node: Node) -> Node | None:
         for child in node.children:
-            if child.type in ("block", "compound_statement", "statement_block", "class_body"):
+            if child.type in (
+                "block",
+                "compound_statement",
+                "statement_block",
+                "class_body",
+            ):
                 return child
         return None
 
@@ -471,5 +552,7 @@ class TreeSitterParser:
         return variables
 
 
-def parse_with_tree_sitter(code: str, language: str, language_module: Any) -> dict[str, Any]:
+def parse_with_tree_sitter(
+    code: str, language: str, language_module: Any
+) -> dict[str, Any]:
     return TreeSitterParser(code, language, language_module).parse()

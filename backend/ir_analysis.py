@@ -83,6 +83,13 @@ TRIE_PATTERNS = [r"\btrie\b", r"\bTrie\b", r"\bprefix\b"]
 
 UNION_FIND_PATTERNS = [r"\bunion\b.*\bfind\b", r"\bUnionFind\b", r"\bdisjoint\b"]
 
+MERGE_SORT_PATTERNS = [r"\bmerge_?[Ss]ort\b", r"\bmergeSort\b"]
+QUICK_SORT_PATTERNS = [r"\bquick_?[Ss]ort\b", r"\bquickSort\b", r"\bpartition\s*\("]
+BUBBLE_SORT_PATTERNS = [r"\bbubble_?[Ss]ort\b", r"\bbubbleSort\b"]
+SELECTION_SORT_PATTERNS = [r"\bselection_?[Ss]ort\b", r"\bselectionSort\b"]
+INSERTION_SORT_PATTERNS = [r"\binsertion_?[Ss]ort\b", r"\binsertionSort\b"]
+BINARY_SEARCH_PATTERNS = [r"\bbinary_?[Ss]earch\b", r"\bbinarySearch\b"]
+
 DESIGN_PATTERNS: dict[str, list[str]] = {
     "twitter_design": [
         r"\bTwitter\b",
@@ -182,11 +189,7 @@ def _detect_concepts(code: str, ir: dict[str, Any]) -> list[str]:
     for concept, patterns in DESIGN_PATTERNS.items():
         if sum(1 for p in patterns if re.search(p, code, re.IGNORECASE)) >= 1:
             if concept == "twitter_design":
-                matches = sum(
-                    1
-                    for p in patterns
-                    if re.search(p, code, re.IGNORECASE)
-                )
+                matches = sum(1 for p in patterns if re.search(p, code, re.IGNORECASE))
                 if matches >= 2:
                     concepts.append(concept)
             elif concept == "design_twitter":
@@ -236,6 +239,22 @@ def _detect_algorithm(code: str, ir: dict[str, Any]) -> str | None:
     if {"posttweet", "getnewsfeed", "follow"} & method_names:
         return "twitter_design"
 
+    # Sorting/search detection is language-agnostic textual matching so
+    # Python/Java/JS (which have no structural sort detector) still get
+    # real algorithm classification, matching the C++ parser's coverage.
+    if any(re.search(p, code) for p in MERGE_SORT_PATTERNS):
+        return "merge_sort"
+    if any(re.search(p, code) for p in QUICK_SORT_PATTERNS):
+        return "quick_sort"
+    if any(re.search(p, code) for p in BUBBLE_SORT_PATTERNS):
+        return "bubble_sort"
+    if any(re.search(p, code) for p in SELECTION_SORT_PATTERNS):
+        return "selection_sort"
+    if any(re.search(p, code) for p in INSERTION_SORT_PATTERNS):
+        return "insertion_sort"
+    if any(re.search(p, code) for p in BINARY_SEARCH_PATTERNS):
+        return "binary_search"
+
     return ir.get("algorithm")
 
 
@@ -268,9 +287,13 @@ def _derive_operations(ir: dict[str, Any]) -> list[str]:
     operations = list(ir.get("operations") or [])
 
     for cls in ir.get("classes") or []:
-        operations.append(f"class {cls.get('name')} with {len(cls.get('methods', []))} methods")
+        operations.append(
+            f"class {cls.get('name')} with {len(cls.get('methods', []))} methods"
+        )
         for member in cls.get("members") or []:
-            operations.append(f"member: {member.get('name')} ({member.get('type', 'unknown')})")
+            operations.append(
+                f"member: {member.get('name')} ({member.get('type', 'unknown')})"
+            )
 
     for method in _collect_methods(ir):
         params = ", ".join(

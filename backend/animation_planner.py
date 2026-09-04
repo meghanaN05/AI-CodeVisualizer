@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from animation_schema import AnimationPlan, SceneAction
+from tree_extractor import walk_inorder, walk_postorder, walk_preorder
 from visualization.layout import compute_graph_layout
 
 DEFAULT_TREE: dict[str, Any] = {
@@ -59,6 +60,10 @@ def plan_from_ir(ir: dict[str, Any]) -> AnimationPlan:
         return _plan_selection_sort(ir)
     if algorithm == "insertion_sort":
         return _plan_insertion_sort(ir)
+    if algorithm == "merge_sort":
+        return _plan_merge_sort(ir)
+    if algorithm == "quick_sort":
+        return _plan_quick_sort(ir)
     if algorithm == "bfs":
         return _plan_graph_traversal(ir, "BFS")
     if algorithm == "dfs":
@@ -217,9 +222,23 @@ def _plan_class_design(ir: dict[str, Any]) -> AnimationPlan:
             )
         )
     if "binary_tree" in structures:
-        scenes.append(
-            SceneAction(action="show_tree", tree=DEFAULT_TREE, caption="Tree structure")
-        )
+        real_tree = _get_extracted_tree(ir)
+        if real_tree is not None:
+            scenes.append(
+                SceneAction(
+                    action="show_tree",
+                    tree=real_tree,
+                    caption="Tree structure (your tree)",
+                )
+            )
+        else:
+            scenes.append(
+                SceneAction(
+                    action="show_tree",
+                    tree=DEFAULT_TREE,
+                    caption="Tree structure (illustrative tree)",
+                )
+            )
 
     for method in methods[:6]:
         scenes.append(
@@ -408,10 +427,14 @@ def _plan_dsa_overview(ir: dict[str, Any]) -> AnimationPlan:
 
 
 def _plan_array(ir: dict[str, Any]) -> AnimationPlan:
-    values = _extract_array_values(ir)
+    values, source_label = _resolve_array_values(ir, [5, 2, 8, 1])
     scenes: list[SceneAction] = [
         SceneAction(action="show_title", text="Array Visualization"),
-        SceneAction(action="create_array", values=values),
+        SceneAction(
+            action="create_array",
+            values=values,
+            caption=f"Array ({source_label})",
+        ),
     ]
 
     loops = ir.get("loops") or []
@@ -464,47 +487,73 @@ def _plan_array(ir: dict[str, Any]) -> AnimationPlan:
     )
 
 
+def _get_extracted_tree(ir: dict[str, Any]) -> dict[str, Any] | None:
+    tree = ir.get("extracted_tree")
+    return tree if isinstance(tree, dict) and "value" in tree else None
+
+
 def _plan_inorder(ir: dict[str, Any]) -> AnimationPlan:
-    tree = DEFAULT_TREE
-    path = [
-        (10, "Visit root"),
-        (5, "Move to left child"),
-        (3, "Visit leftmost node"),
-        (5, "Return to 5"),
-        (7, "Visit right child of 5"),
-        (10, "Return to root"),
-        (20, "Visit right subtree"),
-    ]
+    real = _get_extracted_tree(ir)
+    if real is not None:
+        tree = real
+        path = [(v, f"Visit {v} (inorder)") for v in walk_inorder(tree)]
+        source_label = "your tree"
+    else:
+        tree = DEFAULT_TREE
+        path = [
+            (10, "Visit root"),
+            (5, "Move to left child"),
+            (3, "Visit leftmost node"),
+            (5, "Return to 5"),
+            (7, "Visit right child of 5"),
+            (10, "Return to root"),
+            (20, "Visit right subtree"),
+        ]
+        source_label = "illustrative tree"
     return _plan_tree_traversal(
-        ir, "Inorder Traversal", tree, path, "inorder_traversal"
+        ir, "Inorder Traversal", tree, path, "inorder_traversal", source_label
     )
 
 
 def _plan_preorder(ir: dict[str, Any]) -> AnimationPlan:
-    tree = DEFAULT_TREE
-    path = [
-        (10, "Visit root first"),
-        (5, "Move to left child"),
-        (3, "Visit left subtree"),
-        (7, "Visit right child of 5"),
-        (20, "Visit right subtree"),
-    ]
+    real = _get_extracted_tree(ir)
+    if real is not None:
+        tree = real
+        path = [(v, f"Visit {v} (preorder)") for v in walk_preorder(tree)]
+        source_label = "your tree"
+    else:
+        tree = DEFAULT_TREE
+        path = [
+            (10, "Visit root first"),
+            (5, "Move to left child"),
+            (3, "Visit left subtree"),
+            (7, "Visit right child of 5"),
+            (20, "Visit right subtree"),
+        ]
+        source_label = "illustrative tree"
     return _plan_tree_traversal(
-        ir, "Preorder Traversal", tree, path, "preorder_traversal"
+        ir, "Preorder Traversal", tree, path, "preorder_traversal", source_label
     )
 
 
 def _plan_postorder(ir: dict[str, Any]) -> AnimationPlan:
-    tree = DEFAULT_TREE
-    path = [
-        (3, "Visit leftmost node"),
-        (7, "Visit right child of 5"),
-        (5, "Visit root of left subtree"),
-        (20, "Visit right subtree"),
-        (10, "Visit root last"),
-    ]
+    real = _get_extracted_tree(ir)
+    if real is not None:
+        tree = real
+        path = [(v, f"Visit {v} (postorder)") for v in walk_postorder(tree)]
+        source_label = "your tree"
+    else:
+        tree = DEFAULT_TREE
+        path = [
+            (3, "Visit leftmost node"),
+            (7, "Visit right child of 5"),
+            (5, "Visit root of left subtree"),
+            (20, "Visit right subtree"),
+            (10, "Visit root last"),
+        ]
+        source_label = "illustrative tree"
     return _plan_tree_traversal(
-        ir, "Postorder Traversal", tree, path, "postorder_traversal"
+        ir, "Postorder Traversal", tree, path, "postorder_traversal", source_label
     )
 
 
@@ -514,10 +563,13 @@ def _plan_tree_traversal(
     tree: dict[str, Any],
     path: list[tuple[int, str]],
     algorithm: str,
+    source_label: str = "illustrative tree",
 ) -> AnimationPlan:
     scenes: list[SceneAction] = [
         SceneAction(action="show_title", text=title),
-        SceneAction(action="show_tree", tree=tree),
+        SceneAction(
+            action="show_tree", tree=tree, caption=f"Binary tree ({source_label})"
+        ),
     ]
 
     previous: int | None = None
@@ -550,12 +602,26 @@ def _plan_tree_generic(ir: dict[str, Any]) -> AnimationPlan:
 
 
 def _plan_binary_search(ir: dict[str, Any]) -> AnimationPlan:
-    values = _extract_array_values(ir) or DEFAULT_SEARCH_ARRAY
-    target = 23
-    low, high = 0, len(values) - 1
+    values, source_label = _resolve_array_values(ir, list(DEFAULT_SEARCH_ARRAY))
+    numeric: list[int | float] = [
+        v for v in values if isinstance(v, (int, float)) and not isinstance(v, bool)
+    ]
+    if source_label == "your array" and numeric:
+        # Binary search requires sorted input; we sort the REAL values here
+        # (a disclosed transformation, not fabricated data) since that is a
+        # precondition of the algorithm being visualized.
+        numeric = sorted(numeric)
+        source_label = "your array, sorted for binary search"
+    search_values: list[int | float] = numeric or [2, 5, 8, 12, 16, 23, 38, 56, 72, 91]
+    target = search_values[len(search_values) // 2]
+    low, high = 0, len(search_values) - 1
     scenes: list[SceneAction] = [
         SceneAction(action="show_title", text="Binary Search"),
-        SceneAction(action="create_array", values=values),
+        SceneAction(
+            action="create_array",
+            values=search_values,
+            caption=f"Array ({source_label})",
+        ),
         SceneAction(action="show_caption", text=f"Searching for target = {target}"),
     ]
 
@@ -573,10 +639,10 @@ def _plan_binary_search(ir: dict[str, Any]) -> AnimationPlan:
                 action="highlight_range",
                 index=mid,
                 label=f"mid = {mid}",
-                caption=f"Compare arr[{mid}] = {values[mid]} with target {target}",
+                caption=f"Compare arr[{mid}] = {search_values[mid]} with target {target}",
             )
         )
-        if values[mid] == target:
+        if search_values[mid] == target:
             scenes.append(
                 SceneAction(
                     action="highlight_index",
@@ -586,7 +652,7 @@ def _plan_binary_search(ir: dict[str, Any]) -> AnimationPlan:
                 )
             )
             break
-        if values[mid] < target:
+        if search_values[mid] < target:
             low = mid + 1
             scenes.append(
                 SceneAction(action="show_caption", text="Target is in the right half")
@@ -801,10 +867,12 @@ def _reconstruct_path(prev: dict[str, str], source: str, target: str) -> list[st
 
 
 def _plan_bubble_sort(ir: dict[str, Any]) -> AnimationPlan:
-    values = _extract_array_values(ir) or list(DEFAULT_SORT_ARRAY)
+    values, source_label = _resolve_array_values(ir, list(DEFAULT_SORT_ARRAY))
     scenes: list[SceneAction] = [
         SceneAction(action="show_title", text="Bubble Sort"),
-        SceneAction(action="create_array", values=values),
+        SceneAction(
+            action="create_array", values=values, caption=f"Array ({source_label})"
+        ),
     ]
 
     arr = [int(v) for v in values]
@@ -845,11 +913,13 @@ def _plan_bubble_sort(ir: dict[str, Any]) -> AnimationPlan:
 
 
 def _plan_selection_sort(ir: dict[str, Any]) -> AnimationPlan:
-    values = _extract_array_values(ir) or list(DEFAULT_SORT_ARRAY)
+    values, source_label = _resolve_array_values(ir, list(DEFAULT_SORT_ARRAY))
     arr = [int(v) for v in values]
     scenes: list[SceneAction] = [
         SceneAction(action="show_title", text="Selection Sort"),
-        SceneAction(action="create_array", values=arr),
+        SceneAction(
+            action="create_array", values=arr, caption=f"Array ({source_label})"
+        ),
     ]
 
     n = len(arr)
@@ -888,11 +958,13 @@ def _plan_selection_sort(ir: dict[str, Any]) -> AnimationPlan:
 
 
 def _plan_insertion_sort(ir: dict[str, Any]) -> AnimationPlan:
-    values = _extract_array_values(ir) or list(DEFAULT_SORT_ARRAY)
+    values, source_label = _resolve_array_values(ir, list(DEFAULT_SORT_ARRAY))
     arr = [int(v) for v in values]
     scenes: list[SceneAction] = [
         SceneAction(action="show_title", text="Insertion Sort"),
-        SceneAction(action="create_array", values=arr),
+        SceneAction(
+            action="create_array", values=arr, caption=f"Array ({source_label})"
+        ),
     ]
 
     for i in range(1, len(arr)):
@@ -930,6 +1002,167 @@ def _plan_insertion_sort(ir: dict[str, Any]) -> AnimationPlan:
         data_structure="array",
         scenes=scenes,
     )
+
+
+def _plan_merge_sort(ir: dict[str, Any]) -> AnimationPlan:
+    values, source_label = _resolve_array_values(ir, list(DEFAULT_SORT_ARRAY))
+    arr = [int(v) for v in values]
+    scenes: list[SceneAction] = [
+        SceneAction(action="show_title", text="Merge Sort"),
+        SceneAction(
+            action="create_array", values=list(arr), caption=f"Array ({source_label})"
+        ),
+    ]
+
+    _merge_sort_recursive(arr, 0, len(arr) - 1, scenes)
+
+    scenes.append(
+        SceneAction(action="create_array", values=list(arr), caption="Sorted array")
+    )
+    scenes.append(SceneAction(action="show_caption", text="Merge sort complete"))
+    return AnimationPlan(
+        algorithm="merge_sort",
+        title="Merge Sort",
+        data_structure="array",
+        description="Divide-and-conquer sorting with recursive merge",
+        scenes=scenes,
+    )
+
+
+def _merge_sort_recursive(
+    arr: list[int], low: int, high: int, scenes: list[SceneAction]
+) -> None:
+    if low >= high:
+        return
+    mid = (low + high) // 2
+    scenes.append(
+        SceneAction(
+            action="show_caption",
+            text=f"Split [{low}..{high}] into [{low}..{mid}] and [{mid + 1}..{high}]",
+        )
+    )
+    _merge_sort_recursive(arr, low, mid, scenes)
+    _merge_sort_recursive(arr, mid + 1, high, scenes)
+    _merge(arr, low, mid, high, scenes)
+
+
+def _merge(
+    arr: list[int], low: int, mid: int, high: int, scenes: list[SceneAction]
+) -> None:
+    left = arr[low : mid + 1]
+    right = arr[mid + 1 : high + 1]
+    i = j = 0
+    k = low
+
+    while i < len(left) and j < len(right):
+        left_idx = low + i
+        right_idx = mid + 1 + j
+        scenes.append(
+            SceneAction(
+                action="compare_indices",
+                index=left_idx,
+                label=str(right_idx),
+                caption=f"Compare arr[{left_idx}]={left[i]} and arr[{right_idx}]={right[j]}",
+            )
+        )
+        if left[i] <= right[j]:
+            arr[k] = left[i]
+            i += 1
+        else:
+            arr[k] = right[j]
+            j += 1
+        k += 1
+
+    while i < len(left):
+        arr[k] = left[i]
+        i += 1
+        k += 1
+    while j < len(right):
+        arr[k] = right[j]
+        j += 1
+        k += 1
+
+    scenes.append(
+        SceneAction(
+            action="create_array",
+            values=list(arr),
+            caption=f"Merged [{low}..{high}] -> {arr[low : high + 1]}",
+        )
+    )
+
+
+def _plan_quick_sort(ir: dict[str, Any]) -> AnimationPlan:
+    values, source_label = _resolve_array_values(ir, list(DEFAULT_SORT_ARRAY))
+    arr = [int(v) for v in values]
+    scenes: list[SceneAction] = [
+        SceneAction(action="show_title", text="Quick Sort"),
+        SceneAction(
+            action="create_array", values=list(arr), caption=f"Array ({source_label})"
+        ),
+    ]
+
+    _quick_sort_recursive(arr, 0, len(arr) - 1, scenes)
+
+    scenes.append(
+        SceneAction(action="create_array", values=list(arr), caption="Sorted array")
+    )
+    scenes.append(SceneAction(action="show_caption", text="Quick sort complete"))
+    return AnimationPlan(
+        algorithm="quick_sort",
+        title="Quick Sort",
+        data_structure="array",
+        description="Lomuto-partition quicksort with pivot selection",
+        scenes=scenes,
+    )
+
+
+def _quick_sort_recursive(
+    arr: list[int], low: int, high: int, scenes: list[SceneAction]
+) -> None:
+    if low >= high:
+        return
+
+    pivot = arr[high]
+    scenes.append(
+        SceneAction(action="show_caption", text=f"Pivot = arr[{high}] = {pivot}")
+    )
+    i = low - 1
+    for j in range(low, high):
+        scenes.append(
+            SceneAction(
+                action="compare_indices",
+                index=j,
+                label=str(high),
+                caption=f"Compare arr[{j}]={arr[j]} with pivot {pivot}",
+            )
+        )
+        if arr[j] <= pivot:
+            i += 1
+            arr[i], arr[j] = arr[j], arr[i]
+            if i != j:
+                scenes.append(
+                    SceneAction(
+                        action="swap_indices",
+                        index=i,
+                        label=str(j),
+                        values=list(arr),
+                        caption=f"Swap arr[{i}] and arr[{j}]",
+                    )
+                )
+
+    arr[i + 1], arr[high] = arr[high], arr[i + 1]
+    scenes.append(
+        SceneAction(
+            action="swap_indices",
+            index=i + 1,
+            label=str(high),
+            values=list(arr),
+            caption=f"Place pivot at index {i + 1}",
+        )
+    )
+    pivot_index = i + 1
+    _quick_sort_recursive(arr, low, pivot_index - 1, scenes)
+    _quick_sort_recursive(arr, pivot_index + 1, high, scenes)
 
 
 def _plan_recursion(ir: dict[str, Any]) -> AnimationPlan:
@@ -1098,12 +1331,48 @@ def _plan_generic(ir: dict[str, Any]) -> AnimationPlan:
     )
 
 
-def _extract_array_values(ir: dict[str, Any]) -> list[int | float | str]:
+def _extract_array_values(ir: dict[str, Any]) -> list[int | float | str] | None:
+    """Return the REAL array literal from the user's code, or None when
+    nothing concrete could be recovered (never a fabricated default)."""
     for array in ir.get("arrays") or []:
         init = array.get("initializer")
-        if isinstance(init, list) and init:
+        if (
+            isinstance(init, list)
+            and init
+            and not any(isinstance(v, list) for v in init)
+        ):
             return init
-    return [5, 2, 8, 1]
+
+    candidate_pools: list[list[dict[str, Any]]] = [ir.get("global_variables") or []]
+    for fn in ir.get("functions") or []:
+        candidate_pools.append(fn.get("variables") or [])
+    for cls in ir.get("classes") or []:
+        for method in cls.get("methods") or []:
+            candidate_pools.append(method.get("variables") or [])
+
+    for pool in candidate_pools:
+        for var in pool:
+            init = var.get("initializer")
+            if (
+                isinstance(init, list)
+                and init
+                and not any(isinstance(v, list) for v in init)
+            ):
+                return init
+    return None
+
+
+def _resolve_array_values(
+    ir: dict[str, Any], default: list[int | float | str]
+) -> tuple[list[int | float | str], str]:
+    """Real array data + a disclosed label, or an explicitly illustrative
+    fallback — mirrors the graph/tree extractor's real-vs-illustrative
+    convention so fabricated data is never presented as the user's own.
+    """
+    values = _extract_array_values(ir)
+    if values:
+        return list(values), "your array"
+    return list(default), "illustrative array"
 
 
 def _parse_index(index_text: str, length: int) -> int | None:

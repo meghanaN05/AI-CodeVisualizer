@@ -6,10 +6,8 @@ import re
 from typing import Any
 
 import tree_sitter_cpp as tscpp
-from tree_sitter import Language, Node, Parser, Tree
-
 from ir_analysis import enrich_ir
-
+from tree_sitter import Language, Node, Parser, Tree
 
 _CPP_LANGUAGE = Language(tscpp.language())
 _PARSER = Parser(_CPP_LANGUAGE)
@@ -179,9 +177,7 @@ class CppParser:
                     )
         return members
 
-    def _parse_class_method(
-        self, node: Node, class_name: str
-    ) -> dict[str, Any] | None:
+    def _parse_class_method(self, node: Node, class_name: str) -> dict[str, Any] | None:
         declarator = self._find_child(node, "function_declarator")
         if declarator is None:
             return None
@@ -668,6 +664,12 @@ class CppParser:
         if self._looks_like_binary_search():
             return "binary_search"
 
+        if self._looks_like_merge_sort():
+            return "merge_sort"
+
+        if self._looks_like_quick_sort():
+            return "quick_sort"
+
         if self._looks_like_bubble_sort():
             return "bubble_sort"
 
@@ -744,9 +746,8 @@ class CppParser:
         condition_text = " ".join(self.conditions).lower()
         code_lower = self.code.lower()
 
-        has_pointers = (
-            {"low", "high"}.issubset(names)
-            or ({"low", "high"}.issubset(set(re.findall(r"\b(low|high|mid)\b", code_lower))))
+        has_pointers = {"low", "high"}.issubset(names) or (
+            {"low", "high"}.issubset(set(re.findall(r"\b(low|high|mid)\b", code_lower)))
         )
         has_mid = (
             "mid" in names
@@ -757,13 +758,16 @@ class CppParser:
             access["index"] == "mid" for access in self.subscript_accesses
         )
 
-        return has_pointers and has_mid and (has_array_mid or "while" in str(self.loops))
+        return (
+            has_pointers and has_mid and (has_array_mid or "while" in str(self.loops))
+        )
 
     def _looks_like_bubble_sort(self) -> bool:
         nested = len(self.loops) >= 2
-        has_swap = any(
-            call["function"] in {"swap", "std::swap"} for call in self.calls
-        ) or "swap" in self.code.lower()
+        has_swap = (
+            any(call["function"] in {"swap", "std::swap"} for call in self.calls)
+            or "swap" in self.code.lower()
+        )
         return nested and has_swap and "array" in self._detect_data_structures()
 
     def _looks_like_selection_sort(self) -> bool:
@@ -776,6 +780,24 @@ class CppParser:
         code_lower = self.code.lower()
         return "array" in self._detect_data_structures() and "key" in code_lower
 
+    def _looks_like_merge_sort(self) -> bool:
+        code_lower = self.code.lower()
+        if re.search(r"\bmerge_?sort\b", code_lower):
+            return True
+        fn_names = {fn["name"].lower() for fn in self.functions}
+        has_merge_fn = "merge" in fn_names or "mergesort" in fn_names
+        recursive = any(fn.get("recursive") for fn in self.functions)
+        return has_merge_fn and recursive
+
+    def _looks_like_quick_sort(self) -> bool:
+        code_lower = self.code.lower()
+        if re.search(r"\bquick_?sort\b", code_lower):
+            return True
+        fn_names = {fn["name"].lower() for fn in self.functions}
+        has_partition = "partition" in fn_names or "partition" in code_lower
+        recursive = any(fn.get("recursive") for fn in self.functions)
+        return has_partition and recursive
+
     def _looks_like_bfs(self) -> bool:
         code_lower = self.code.lower()
         return "queue" in code_lower and bool(self.loops or self.calls)
@@ -783,8 +805,7 @@ class CppParser:
     def _looks_like_dfs(self) -> bool:
         code_lower = self.code.lower()
         return (
-            "visited" in code_lower
-            or any(fn.get("recursive") for fn in self.functions)
+            "visited" in code_lower or any(fn.get("recursive") for fn in self.functions)
         ) and "graph" in self._detect_data_structures()
 
     def _derive_operations(
@@ -821,9 +842,7 @@ class CppParser:
             operations.append(f"detected algorithm: {algorithm}")
 
         if data_structures:
-            operations.append(
-                "detected data structures: " + ", ".join(data_structures)
-            )
+            operations.append("detected data structures: " + ", ".join(data_structures))
 
         return operations
 

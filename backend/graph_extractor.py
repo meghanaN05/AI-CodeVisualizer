@@ -27,8 +27,32 @@ import re
 from typing import Any
 
 # Keywords that indicate the variable holds a graph / edge list.
-_ADJACENCY_NAMES = ("graph", "adj", "adjacency", "g")
+_ADJACENCY_NAMES = ("graph", "adj", "adjacency", "g", "matrix")
 _EDGE_NAMES = ("edges", "edge_list", "edge", "route", "connections")
+
+_DIRECTED_HINTS = re.compile(
+    r"\b(directed\s*graph|digraph|di_graph|is_directed\s*=\s*true)\b", re.IGNORECASE
+)
+_UNDIRECTED_HINTS = re.compile(r"\bundirected\b", re.IGNORECASE)
+
+
+def _infer_directed(code: str, edges: list[tuple[str, str, Any]]) -> bool:
+    """Best-effort directed/undirected inference.
+
+    Explicit textual signals win. Otherwise, an edge list that is NOT
+    symmetric (missing the reverse of at least one pair) is treated as
+    directed — a graph meant to be undirected is normally built with both
+    directions present.
+    """
+    if _UNDIRECTED_HINTS.search(code):
+        return False
+    if _DIRECTED_HINTS.search(code):
+        return True
+    if not edges:
+        return False
+    pairs = {(u, v) for u, v, _w in edges}
+    symmetric = all((v, u) in pairs for u, v, _w in edges)
+    return not symmetric
 
 
 def extract_graph(code: str, language: str) -> dict[str, Any] | None:
@@ -36,14 +60,19 @@ def extract_graph(code: str, language: str) -> dict[str, Any] | None:
     lang = (language or "").strip().lower()
 
     if lang in {"python", "py"}:
-        return _extract_python(code)
-    if lang in {"cpp", "c++", "c"}:
-        return _extract_cpp(code)
-    if lang == "java":
-        return _extract_java(code)
-    if lang in {"javascript", "js"}:
-        return _extract_javascript(code)
-    return None
+        graph = _extract_python(code)
+    elif lang in {"cpp", "c++", "c"}:
+        graph = _extract_cpp(code)
+    elif lang == "java":
+        graph = _extract_java(code)
+    elif lang in {"javascript", "js"}:
+        graph = _extract_javascript(code)
+    else:
+        graph = None
+
+    if graph is not None and "directed" not in graph:
+        graph["directed"] = _infer_directed(code, graph.get("edges") or [])
+    return graph
 
 
 # --------------------------------------------------------------------------- #
@@ -188,7 +217,7 @@ def _extract_brace_or_list_adjacency(code: str) -> dict[str, Any] | None:
     If the literal is symmetric, duplicate undirected edges are collapsed.
     """
     match = re.search(
-        r"\b(?:graph|adj|adjacency)\w*\b\s*=\s*(\{\s*\{|\[\s*\[)",
+        r"\b(?:graph|adj|adjacency|matrix)\w*\b\s*(?:\[[^\]]*\])*\s*=\s*(\{\s*\{|\[\s*\[)",
         code,
         re.IGNORECASE,
     )
@@ -204,12 +233,21 @@ def _extract_brace_or_list_adjacency(code: str) -> dict[str, Any] | None:
     if rows is None:
         return None
 
-    nodes = [str(i) for i in range(len(rows))]
-    raw_edges: list[tuple[str, str, Any]] = []
-    for u, neighbors in enumerate(rows):
-        for v in neighbors:
-            raw_edges.append((str(u), str(v), 1))
+    node_count = len(rows)
+    is_square_matrix = node_count > 1 and all(len(row) == node_count for row in rows)
 
+    if is_square_matrix:
+        raw_edges = _matrix_to_edges(rows)
+    else:
+        raw_edges = []
+        for u, neighbors in enumerate(rows):
+            for v in neighbors:
+                raw_edges.append((str(u), str(v), 1))
+
+    nodes = [str(i) for i in range(node_count)]
+    # Infer directedness from the RAW edges, before symmetric pairs are
+    # collapsed — the deduped result always looks "asymmetric" otherwise.
+    directed = _infer_directed(code, raw_edges)
     edges = _dedupe_undirected_if_symmetric(raw_edges)
     if not nodes and not edges:
         return None
@@ -220,7 +258,23 @@ def _extract_brace_or_list_adjacency(code: str) -> dict[str, Any] | None:
         if nodes and nodes[0] in out_nodes
         else (next(iter(out_nodes), nodes[0] if nodes else None))
     )
-    return {"nodes": nodes, "edges": edges, "source": source}
+    return {"nodes": nodes, "edges": edges, "source": source, "directed": directed}
+
+
+def _matrix_to_edges(rows: list[list[int]]) -> list[tuple[str, str, Any]]:
+    """Interpret a square NxN literal as an adjacency matrix.
+
+    matrix[i][j] != 0 means an edge i -> j; a value other than 1 is kept
+    as the edge weight (e.g. Floyd-Warshall style distance matrices).
+    """
+    edges: list[tuple[str, str, Any]] = []
+    for i, row in enumerate(rows):
+        for j, value in enumerate(row):
+            if i == j or value == 0:
+                continue
+            weight: Any = 1 if value == 1 else value
+            edges.append((str(i), str(j), weight))
+    return edges
 
 
 def _extract_imperative(code: str) -> dict[str, Any] | None:

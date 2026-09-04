@@ -39,7 +39,6 @@ def parse_python(code: str) -> dict[str, Any]:
     conditions: list[str] = []
     calls: list[dict[str, Any]] = []
     loops: list[dict[str, Any]] = []
-    arrays: list[dict[str, Any]] = []
 
     for node in tree.body:
         if isinstance(node, ast.ClassDef):
@@ -52,6 +51,10 @@ def parse_python(code: str) -> dict[str, Any]:
             calls.extend(_extract_calls(node, fn["name"]))
         elif isinstance(node, ast.Assign):
             global_variables.extend(_parse_assign(node, scope="global"))
+
+    arrays = _collect_arrays(global_variables)
+    for fn in functions:
+        arrays.extend(_collect_arrays(fn.get("variables") or []))
 
     ir = {
         "language": "python",
@@ -69,6 +72,27 @@ def parse_python(code: str) -> dict[str, Any]:
         "operations": [],
     }
     return enrich_ir(ir, code, "python")
+
+
+def _collect_arrays(variables: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Pull out variables whose real initializer is a literal list — the
+    actual array data the user wrote, instead of a re-serialized string.
+    """
+    arrays: list[dict[str, Any]] = []
+    for var in variables:
+        init = var.get("initializer")
+        if isinstance(init, list):
+            arrays.append(
+                {
+                    "name": var["name"],
+                    "type": "list",
+                    "scope": var.get("scope", "local"),
+                    "size": len(init),
+                    "initializer": init,
+                    "line": var.get("line"),
+                }
+            )
+    return arrays
 
 
 def _parse_class(node: ast.ClassDef) -> dict[str, Any]:
@@ -89,7 +113,12 @@ def _parse_class(node: ast.ClassDef) -> dict[str, Any]:
         elif isinstance(item, ast.Assign):
             members.extend(_parse_assign(item, scope="member"))
 
-    return {"name": node.name, "members": members, "methods": methods, "line": node.lineno}
+    return {
+        "name": node.name,
+        "members": members,
+        "methods": methods,
+        "line": node.lineno,
+    }
 
 
 def _parse_function(
@@ -97,9 +126,7 @@ def _parse_function(
 ) -> dict[str, Any]:
     fn_calls = _call_names(node)
     fn_conditions = [
-        ast.unparse(child.test)
-        for child in ast.walk(node)
-        if isinstance(child, ast.If)
+        ast.unparse(child.test) for child in ast.walk(node) if isinstance(child, ast.If)
     ]
     fn_loops = [
         {
@@ -131,6 +158,7 @@ def _parse_function(
 
 def _parse_assign(node: ast.Assign, scope: str) -> list[dict[str, Any]]:
     variables: list[dict[str, Any]] = []
+    initializer = _literal_or_source(node.value)
     for target in node.targets:
         if isinstance(target, ast.Name):
             variables.append(
@@ -138,7 +166,7 @@ def _parse_assign(node: ast.Assign, scope: str) -> list[dict[str, Any]]:
                     "name": target.id,
                     "type": "Any",
                     "scope": scope,
-                    "initializer": ast.unparse(node.value),
+                    "initializer": initializer,
                     "line": getattr(node, "lineno", None),
                 }
             )
@@ -148,11 +176,21 @@ def _parse_assign(node: ast.Assign, scope: str) -> list[dict[str, Any]]:
                     "name": ast.unparse(target),
                     "type": "Any",
                     "scope": scope,
-                    "initializer": ast.unparse(node.value),
+                    "initializer": initializer,
                     "line": getattr(node, "lineno", None),
                 }
             )
     return variables
+
+
+def _literal_or_source(value: ast.expr) -> Any:
+    """Prefer the REAL literal value (e.g. an actual list of ints) over a
+    re-serialized source string, so downstream planners see real data.
+    """
+    try:
+        return ast.literal_eval(value)
+    except (ValueError, TypeError, SyntaxError):
+        return ast.unparse(value)
 
 
 def _call_names(node: ast.AST) -> list[str]:

@@ -1,10 +1,11 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { generateVideo } from "./api";
+import Header from "./components/Header";
+import CodeEditorPanel from "./components/CodeEditorPanel";
+import VideoPanel from "./components/VideoPanel";
 import "./index.css";
 
-function App() {
-  const [code, setCode] = useState(
-`#include <iostream>
+const DEFAULT_CODE = `#include <iostream>
 using namespace std;
 
 int main() {
@@ -15,14 +16,33 @@ int main() {
     }
 
     return 0;
-}`
-  );
+}`;
 
+function App() {
+  const [code, setCode] = useState(DEFAULT_CODE);
   const [language, setLanguage] = useState("cpp");
   const [loading, setLoading] = useState(false);
+  const [stageIndex, setStageIndex] = useState(0);
   const [videoUrl, setVideoUrl] = useState(null);
   const [meta, setMeta] = useState(null);
   const [error, setError] = useState("");
+
+  const timers = useRef([]);
+
+  const clearStageTimers = () => {
+    timers.current.forEach(clearTimeout);
+    timers.current = [];
+  };
+
+  // The backend performs parse -> plan -> render as a single synchronous
+  // call, so there's no real progress feed. These staged messages are a
+  // simulated, best-effort approximation to keep the wait feeling honest
+  // and informative rather than a single opaque spinner.
+  const runStagedProgress = () => {
+    setStageIndex(0);
+    timers.current.push(setTimeout(() => setStageIndex(1), 1200));
+    timers.current.push(setTimeout(() => setStageIndex(2), 2800));
+  };
 
   const handleGenerate = async () => {
     if (!code.trim()) {
@@ -34,6 +54,7 @@ int main() {
     setError("");
     setVideoUrl(null);
     setMeta(null);
+    runStagedProgress();
 
     try {
       const result = await generateVideo(code, language);
@@ -48,108 +69,39 @@ int main() {
       setError(err.message || "Failed to generate visualization.");
       console.error(err);
     } finally {
+      clearStageTimers();
       setLoading(false);
     }
   };
 
   return (
     <div className="app">
+      <div className="app__glow" aria-hidden="true" />
 
-      <header className="navbar">
-        <h1>Code2Video</h1>
-        <p>Visualize your code with AI</p>
-      </header>
+      <Header />
 
       <main className="container">
+        <CodeEditorPanel
+          code={code}
+          setCode={setCode}
+          language={language}
+          setLanguage={setLanguage}
+          loading={loading}
+          onGenerate={handleGenerate}
+          error={error}
+        />
 
-        <section className="editor-section">
-
-          <div className="section-header">
-            <h2>Upload / Enter Code</h2>
-
-            <select
-              value={language}
-              onChange={(e) => setLanguage(e.target.value)}
-            >
-              <option value="cpp">C++</option>
-              <option value="python">Python</option>
-              <option value="java">Java</option>
-              <option value="javascript">JavaScript</option>
-            </select>
-          </div>
-
-          <textarea
-            value={code}
-            onChange={(e) => setCode(e.target.value)}
-            placeholder="Paste your code here..."
-            spellCheck="false"
-          />
-
-          <button
-            onClick={handleGenerate}
-            disabled={loading}
-          >
-            {loading ? "Generating..." : "Generate Visualization"}
-          </button>
-
-          {error && (
-            <p className="error">
-              {error}
-            </p>
-          )}
-
-        </section>
-
-        <section className="video-section">
-
-          <h2>Visualization</h2>
-
-          {loading && (
-            <div className="loading">
-              <div className="spinner"></div>
-              <p>
-                Analyzing code and generating animation...
-              </p>
-            </div>
-          )}
-
-          {!loading && !videoUrl && (
-            <div className="empty">
-              <p>Your generated visualization will appear here.</p>
-            </div>
-          )}
-
-          {videoUrl && (
-            <div className="video-container">
-
-              {meta && (
-                <div className="meta">
-                  <p><strong>{meta.title}</strong></p>
-                  {meta.algorithm && <p>Algorithm: {meta.algorithm}</p>}
-                  {meta.dataStructure && <p>Data structure: {meta.dataStructure}</p>}
-                </div>
-              )}
-
-              <video
-                controls
-                src={videoUrl}
-              />
-
-              <a
-                href={videoUrl}
-                download="code-visualization.mp4"
-                className="download"
-              >
-                Download Video
-              </a>
-
-            </div>
-          )}
-
-        </section>
-
+        <VideoPanel
+          loading={loading}
+          stageIndex={stageIndex}
+          videoUrl={videoUrl}
+          meta={meta}
+        />
       </main>
 
+      <footer className="app-footer">
+        <p>Code2Video — AI-assisted algorithm animation</p>
+      </footer>
     </div>
   );
 }
