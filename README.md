@@ -11,13 +11,13 @@ Source Code
      ↓
 Language Detection
      ↓
-Code Parsing
+Code Parsing (AST-based IR)
      ↓
-Intermediate Representation
+Enrich IR (extract real arrays/graphs/trees, detect algorithm)
      ↓
-AI Analysis
+Classify Input (graph | tree | system-design | array | generic)
      ↓
-Animation Plan
+Plan (Visualization DSL) — Layout Engine computes coordinates
      ↓
 Manim Code Generation
      ↓
@@ -191,8 +191,6 @@ Users can:
 
 # 📂 Project Structure
 
-The current MVP uses a deliberately minimal structure:
-
 ```text
 AI-CodeVisualizer/
 │
@@ -201,19 +199,49 @@ AI-CodeVisualizer/
 │   │   ├── App.jsx
 │   │   ├── main.jsx
 │   │   ├── api.js
+│   │   ├── components/
+│   │   │   ├── Header.jsx
+│   │   │   ├── CodeEditorPanel.jsx
+│   │   │   ├── VideoPanel.jsx
+│   │   │   ├── icons.jsx
+│   │   │   └── languages.js
 │   │   └── index.css
 │   └── package.json
 │
 ├── backend/
-│   ├── app.py
-│   ├── parser.py
-│   ├── ai.py
-│   ├── manim_generator.py
-│   ├── renderer.py
+│   ├── app.py                 # FastAPI routes
+│   ├── pipeline.py            # analyze → classify → plan
+│   ├── analyzer.py            # semantic analyzer (classification, complexity)
+│   ├── classifier.py          # domain classification
+│   ├── parser.py              # entrypoint → AST parsers
+│   ├── python_parser.py       # Python AST parser
+│   ├── cpp_parser.py          # C++ (tree-sitter / fallback)
+│   ├── java_parser.py         # Java (tree-sitter / fallback)
+│   ├── javascript_parser.py   # JavaScript (tree-sitter / fallback)
+│   ├── ts_parser.py           # shared tree-sitter helper
+│   ├── graph_extractor.py     # real graph data extraction
+│   ├── tree_extractor.py      # real tree data extraction
+│   ├── ir_analysis.py         # algorithm/data-structure detection
+│   ├── ai.py                  # optional LLM planner (fallback = rule-based)
+│   ├── animation_planner.py   # legacy rule-based planner
+│   ├── animation_schema.py    # legacy plan schema
+│   ├── manim_generator.py     # plan → Manim code
+│   ├── renderer.py            # Manim → MP4
+│   ├── visualization/         # DSL + layout engine
+│   │   ├── schema.py          # VisualizationDocument / DslStep DSL
+│   │   ├── graph.py           # Dijkstra / BFS / DFS planners
+│   │   ├── tree.py            # inorder/preorder/postorder planners
+│   │   ├── system_design.py   # Twitter architecture planner
+│   │   ├── layout.py          # collision-free Node/Graph/Architecture layout
+│   │   ├── complexity.py      # scene/effort estimator
+│   │   ├── validator.py       # DSL validation
+│   │   └── __init__.py
 │   └── requirements.txt
 │
-├── uploads/
 ├── outputs/
+│   ├── videos/                # generated MP4s (served at /videos)
+│   ├── scenes/                # generated Manim scripts
+│   └── media/                 # Manim render cache
 │
 ├── Dockerfile
 └── README.md
@@ -296,10 +324,18 @@ Current architecture:
 backend/
 │
 ├── app.py
+├── pipeline.py
+├── analyzer.py
+├── classifier.py
 ├── parser.py
+├── graph_extractor.py
+├── tree_extractor.py
+├── ir_analysis.py
 ├── ai.py
+├── animation_planner.py
 ├── manim_generator.py
 ├── renderer.py
+├── visualization/
 └── requirements.txt
 ```
 
@@ -313,6 +349,7 @@ It exposes:
 
 ```text
 GET  /
+POST /parse
 POST /generate
 ```
 
@@ -329,41 +366,86 @@ and sends it through the visualization pipeline.
 
 ---
 
+## `pipeline.py`
+
+The unified planning pipeline. It wires the analysis layer into the planners:
+
+```text
+analyzer.analyze()          → enriched IR (classification, graph, complexity)
+classifier domain           → graph | tree | system_design | fallback
+visualization.* planners    → VisualizationDocument (DSL)
+layout.apply_layout()       → collision-free coordinates
+validator.validate_document → DSL sanity checks
+manim_generator             → Manim code
+```
+
+Graphs, trees, and system-design inputs are routed through the deterministic
+DSL agents in `visualization/`. Everything else (sorts, recursion, hash maps,
+generic code) falls back to the legacy rule-based planner in
+`animation_planner.py`.
+
+---
+
 ## `parser.py`
 
-Responsible for analyzing the submitted source code.
+Responsible for analyzing the submitted source code using real AST parsers:
 
-Current MVP implementation provides a simple intermediate representation.
+- Python: built-in `ast`
+- C++: tree-sitter (or text fallback)
+- Java / JavaScript: tree-sitter
 
-Future implementation will use proper parsers such as:
+Each parse produces a language-neutral IR that is then enriched with:
 
-- Tree-sitter
-- Python AST
-- Clang AST
-- JavaParser
-- Babel Parser
+- Real array literals (`arrays`)
+- Extracted graph (`extracted_graph`, via `graph_extractor.py`)
+- Extracted tree (`extracted_tree`, via `tree_extractor.py`)
+- Detected algorithm / data structures (via `ir_analysis.py`)
+
+---
+
+## `classifier.py`
+
+Classifies input into one of five domains:
+
+- `graph` — Dijkstra, BFS, DFS constructions
+- `tree` — BST/traversal code
+- `system_design` — Twitter / architecture-style prompts
+- `array` — sorting, binary search
+- `generic` — fallback
+
+---
+
+## `analyzer.py`
+
+Semantic analyzer combining parsing, classification, graph extraction, and
+complexity estimation into a single enriched IR.
 
 ---
 
 ## `ai.py`
 
-Responsible for AI-based code understanding.
+Optional LLM-driven planner. When `OPENAI_API_KEY` is set, the LLM decides the
+approach and emits a structured, validated animation plan. Without a key (or
+on any LLM failure) the system deterministically falls back to the rule-based
+planner, so the pipeline never depends on network access.
 
-The planned pipeline is:
+The LLM plans WHAT to show; the deterministic layout engine decides WHERE to
+place objects, and `manim_generator.py` decides HOW to animate.
 
-```text
-Parsed Code
-     ↓
-Prompt Construction
-     ↓
-LLM
-     ↓
-Animation JSON
-```
+---
 
-The LLM should produce structured JSON rather than directly producing arbitrary Manim code.
+## `visualization/`
 
-This makes the system easier to validate and safer to execute.
+The deterministic DSL package (`VisualizationDocument` / `DslStep`):
+
+- `graph.py`    — Dijkstra, BFS, DFS planners (run on the real extracted graph)
+- `tree.py`     — inorder/preorder/postorder traversal planners
+- `system_design.py` — Twitter-style architecture chapters
+- `layout.py`   — collision-detection layout engine (NetworkX + reflow) that
+  fills coordinates; the planner never emits coordinates itself
+- `complexity.py` — estimates scene count so large problems become chapters
+- `validator.py` — rejects unsupported DSL actions before rendering
+- `schema.py`   — contract between planner and renderer
 
 ---
 
@@ -371,15 +453,10 @@ This makes the system easier to validate and safer to execute.
 
 Converts the animation plan into Manim code.
 
-Example:
-
-```text
-Animation JSON
-      ↓
-Manim Generator
-      ↓
-Python Script
-```
+Supports array, tree, graph, heap, hash-map, stack, recursion, shortest-path,
+and architecture scenes. Object cleanup is keyed to the mobjects actually
+added to the scene, so re-rendered arrays/graphs/heaps replace rather than
+stack.
 
 ---
 
@@ -387,13 +464,12 @@ Python Script
 
 Responsible for running Manim and generating the final video.
 
-Eventually it will execute something similar to:
-
 ```bash
-manim -pqh generated_scene.py SceneName
+manim -ql --disable_caching scene.py CodeVisualization
 ```
 
-The generated `.mp4` file will then be returned to the frontend.
+The generated `.mp4` file is copied into `outputs/videos/` and served at
+`/videos/<scene_id>.mp4`.
 
 ---
 
@@ -488,53 +564,27 @@ Step-by-Step Video
 
 # 🌳 Supported Visualizations
 
-The system is designed to eventually support:
+### Implemented (real data extracted from your code)
 
-### Trees
+- Array traversal & sorting: Bubble, Selection, Insertion, Merge, Quick, Binary Search
+- Trees: Inorder / Preorder / Postorder traversals (uses your tree when extractable)
+- Graphs: BFS, DFS, Dijkstra's shortest path (uses your graph when extractable)
+- Recursion: call-stack push/pop visualization
+- Hash map: insert / lookup
+- Heap: push / pop on a priority queue
+- System design: Twitter architecture (requirements, write path, fanout, timeline, scaling)
+- Object-oriented designs: class + methods overview that composes the above structures
 
-- Binary Tree
-- Binary Search Tree
-- AVL Tree
-- Heap
-- Trie
-- Segment Tree
+### Planned
 
-### Graphs
-
-- BFS
-- DFS
-- Dijkstra
-- Bellman-Ford
-- Floyd-Warshall
-- Prim's Algorithm
-- Kruskal's Algorithm
-
-### Sorting
-
-- Bubble Sort
-- Selection Sort
-- Insertion Sort
-- Merge Sort
-- Quick Sort
-- Heap Sort
-
-### Data Structures
-
-- Array
 - Linked List
-- Stack
-- Queue
-- Deque
-- Hash Table
-- Heap
-
-### Other Algorithms
-
-- Recursion
+- Tries, Union-Find, LRU Cache (currently illustrative outlines)
+- Dynamic Programming tables (currently illustrative)
+- AVL / Red-Black / Segment trees
+- Prim's / Kruskal's algorithms
 - Backtracking
-- Dynamic Programming
-- Searching
-- Greedy Algorithms
+- Bellman-Ford / Floyd-Warshall
+- Heap Sort / Counting Sort
 
 ---
 
@@ -659,6 +709,24 @@ Response:
 
 ---
 
+## Parse (Analysis)
+
+```http
+POST /parse
+```
+
+Request:
+
+```json
+{
+  "code": "def inorder(root):\n    if not root: return\n    inorder(root.left)\n    ...",
+  "language": "python"
+}
+```
+
+Response includes the enriched IR, classification, complexity estimate, and
+the animation plan.
+
 ## Generate Visualization
 
 ```http
@@ -679,7 +747,12 @@ Response:
 ```json
 {
   "success": true,
-  "video_url": "http://localhost:8000/videos/output.mp4"
+  "video_url": "http://localhost:8000/videos/output.mp4",
+  "algorithm": "code_analysis",
+  "title": "Code Visualization",
+  "data_structure": null,
+  "classification": "array",
+  "complexity": { "scenes_required": 2, "complexity": "low" }
 }
 ```
 
@@ -756,49 +829,60 @@ This allows expensive video rendering to happen asynchronously without blocking 
 - [x] Code input
 - [x] Language selection
 - [x] API communication
-- [ ] Real parser
-- [ ] Manim rendering
+- [x] Real parser (Python AST, tree-sitter for C++/Java/JS)
+- [x] Manim rendering
 
 ## Phase 2 — Code Understanding
 
-- [ ] AST generation
-- [ ] Control Flow Graph
-- [ ] Intermediate Representation
-- [ ] Algorithm detection
-- [ ] Variable extraction
+- [x] AST generation
+- [x] Intermediate Representation
+- [x] Algorithm detection
+- [x] Variable extraction
+- [x] Array literal extraction
+- [x] Graph extraction (`graph_extractor`)
+- [x] Tree extraction (`tree_extractor`)
+- [ ] Control Flow Graph / execution trace
 
 ## Phase 3 — AI
 
-- [ ] LLM integration
-- [ ] Prompt engineering
-- [ ] Animation JSON
-- [ ] JSON validation
-- [ ] Scene planning
+- [x] LLM integration (optional, with rule-based fallback)
+- [x] Prompt engineering
+- [x] Animation JSON / DSL
+- [x] JSON validation
+- [x] Scene planning
+- [ ] Phase E: true execution trace / line-level stepping
 
 ## Phase 4 — Visualization
 
-- [ ] Array visualization
-- [ ] Tree visualization
-- [ ] Graph visualization
+- [x] Array visualization
+- [x] Tree visualization (inorder/preorder/postorder)
+- [x] Graph visualization (Dijkstra, BFS, DFS)
+- [x] Sorting visualization (bubble/selection/insertion/merge/quick)
+- [x] Recursion visualization
+- [x] Hash map visualization
+- [x] Heap / priority-queue visualization
+- [x] System-design architecture visualization (Twitter)
+- [x] Collision-free layout engine (`visualization/layout.py`)
 - [ ] Linked List visualization
-- [ ] Sorting visualization
-- [ ] Recursion visualization
+- [ ] Trie / Union-Find / LRU / DP (source-bound, not just illustrative)
+- [ ] AVL / Red-Black / segment tree
+- [ ] Prim / Kruskal
 
 ## Phase 5 — Video Generation
 
-- [ ] Dynamic Manim generation
-- [ ] Manim rendering
-- [ ] MP4 generation
-- [ ] Video preview
-- [ ] Video download
+- [x] Dynamic Manim generation
+- [x] Manim rendering
+- [x] MP4 generation
+- [x] Video preview
+- [x] Video download
 
 ## Phase 6 — Deployment
 
-- [ ] Dockerize backend
+- [x] Dockerize backend
 - [ ] Deploy frontend
 - [ ] Deploy backend
-- [ ] Cloud storage
-- [ ] Background workers
+- [ ] Cloud storage (S3)
+- [ ] Background workers (Celery/Redis)
 - [ ] Redis queue
 - [ ] Production monitoring
 

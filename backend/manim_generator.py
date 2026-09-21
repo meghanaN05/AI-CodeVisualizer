@@ -25,8 +25,10 @@ class CodeVisualization(Scene):
         self.array_values = []
         self.tree_nodes = {{}}
         self.tree_edges = VGroup()
+        self._tree_objects = []
         self.graph_nodes = {{}}
         self.graph_edges = {{}}
+        self._graph_objects = []
         self.graph_group = None
         self.pointer = None
         self.caption = None
@@ -34,6 +36,9 @@ class CodeVisualization(Scene):
         self.var_panel = None
         self.hashmap_group = None
         self.heap_group = None
+        self.arch_components = {{}}
+        self.arch_connections = {{}}
+        self._arch_objects = []
 
         for step in self.SCENES:
             action = step.get("action")
@@ -50,7 +55,7 @@ class CodeVisualization(Scene):
             elif action == "swap_indices":
                 self._swap_indices(step.get("index", 0), step.get("label", "1"), step.get("values", []), step.get("caption"))
             elif action == "show_tree":
-                self._show_tree(step.get("tree", {{}}))
+                self._show_tree(step.get("tree", {{}}), step.get("layout"))
             elif action == "highlight_node":
                 self._highlight_node(step.get("node"), step.get("caption"))
             elif action == "move_pointer":
@@ -95,6 +100,19 @@ class CodeVisualization(Scene):
                 self._update_distance(step.get("node"), step.get("distances", {{}}), step.get("label"), step.get("caption"))
             elif action == "show_shortest_path":
                 self._show_shortest_path(step.get("path", []), step.get("graph", {{}}), step.get("caption"))
+            elif action == "chapter":
+                self._show_chapter(step.get("text", ""))
+            elif action == "show_architecture":
+                self._show_architecture(
+                    step.get("components", []),
+                    step.get("connections", []),
+                    step.get("layout", {{}}),
+                    step.get("caption"),
+                )
+            elif action == "show_flow":
+                self._show_flow(step.get("from"), step.get("to"), step.get("caption"))
+            elif action == "highlight_component":
+                self._highlight_component(step.get("component"), step.get("caption"))
 
         self.wait(1)
 
@@ -118,9 +136,9 @@ class CodeVisualization(Scene):
         self.wait(0.8)
 
     def _create_array(self, values):
-        if hasattr(self, "array_group") and self.array_group in self.mobjects:
-            self.play(FadeOut(self.array_group))
-            self.remove(self.array_group)
+        if getattr(self, "array_boxes", None) and any(b in self.mobjects for b in self.array_boxes):
+            self.play(FadeOut(*self.array_boxes), FadeOut(*self.array_labels))
+            self.remove(*self.array_boxes, *self.array_labels)
         self.array_boxes = []
         self.array_labels = []
         self.array_values = [str(v) for v in values]
@@ -190,14 +208,19 @@ class CodeVisualization(Scene):
             self._show_caption(caption)
         self.wait(0.5)
 
-    def _show_tree(self, tree):
+    def _show_tree(self, tree, layout=None):
+        self._clear_tree()
         self.tree_nodes = {{}}
         self.tree_edges = VGroup()
-        if self.tree_edges in self.mobjects:
-            self.remove(self.tree_edges)
 
         positions = {{}}
-        self._assign_tree_positions(tree, 0, 0, 2.8, positions)
+        if isinstance(layout, dict) and layout:
+            for value, point in layout.items():
+                if isinstance(point, (list, tuple)) and len(point) >= 2:
+                    positions[str(value)] = (float(point[0]), float(point[1]))
+        if not positions:
+            self._assign_tree_positions(tree, 0, 0, 2.8, positions)
+        positions = self._normalize_tree_positions(positions)
         nodes_group = VGroup()
         edges_group = VGroup()
 
@@ -208,6 +231,8 @@ class CodeVisualization(Scene):
             node = VGroup(circle, label)
             node.move_to(RIGHT * x + UP * y)
             self.tree_nodes[str(value)] = node
+            self._tree_objects.append(circle)
+            self._tree_objects.append(label)
             nodes_group.add(node)
 
         def add_edges(node, x, y, spread):
@@ -228,7 +253,36 @@ class CodeVisualization(Scene):
         self.tree_edges = edges_group
         self.play(Create(edges_group), LaggedStart(*[GrowFromCenter(n[0]) for n in nodes_group], lag_ratio=0.1))
         self.play(LaggedStart(*[Write(n[1]) for n in nodes_group], lag_ratio=0.1))
+        self._tree_objects.append(edges_group)
         self.wait(0.6)
+
+    def _normalize_tree_positions(self, positions):
+        if not positions:
+            return positions
+        xs = [p[0] for p in positions.values()]
+        ys = [p[1] for p in positions.values()]
+        min_x, max_x = min(xs), max(xs)
+        min_y, max_y = min(ys), max(ys)
+
+        def _map(v, lo, hi, tlo, thi):
+            if hi - lo < 1e-6:
+                return (tlo + thi) / 2.0
+            return tlo + (v - lo) * (thi - tlo) / (hi - lo)
+
+        normalized = {{}}
+        for value, (x, y) in positions.items():
+            nx = _map(x, min_x, max_x, -6.2, 6.2)
+            ny = _map(y, min_y, max_y, -2.2, 2.6)
+            normalized[str(value)] = (nx, ny)
+        return normalized
+
+    def _clear_tree(self):
+        targets = [m for m in getattr(self, "_tree_objects", []) if m in self.mobjects]
+        if targets:
+            self.play(FadeOut(*targets))
+            self.remove(*targets)
+        self._tree_objects = []
+        self.tree_nodes = {{}}
 
     def _assign_tree_positions(self, node, x, y, spread, positions):
         if not node or "value" not in node:
@@ -385,6 +439,8 @@ class CodeVisualization(Scene):
             group = VGroup(circle, label).move_to(pos)
             self.graph_nodes[node_id] = group
             self.tree_nodes[node_id] = group
+            self._graph_objects.append(circle)
+            self._graph_objects.append(label)
             node_group.add(group)
         return node_group
 
@@ -428,11 +484,20 @@ class CodeVisualization(Scene):
                 self.graph_edges[(target, source)] = info
         return edge_group, weight_group
 
+    def _clear_graph(self):
+        targets = [m for m in getattr(self, "_graph_objects", []) if m in self.mobjects]
+        if targets:
+            self.play(FadeOut(*targets))
+            self.remove(*targets)
+        self._graph_objects = []
+        self.graph_nodes = {{}}
+        self.graph_edges = {{}}
+        self.graph_group = None
+
     def _render_graph(self, scene, caption=None):
         if caption:
             self._show_caption(caption)
-        if self.graph_group in self.mobjects:
-            self.play(FadeOut(self.graph_group))
+        self._clear_graph()
 
         normalized = self._normalize_graph_scene(scene)
         nodes = normalized["nodes"]
@@ -516,8 +581,7 @@ class CodeVisualization(Scene):
     def _show_hashmap(self, name, entries, caption):
         if caption:
             self._show_caption(caption)
-        if self.hashmap_group and self.hashmap_group in self.mobjects:
-            self.play(FadeOut(self.hashmap_group))
+        self._clear_hashmap()
         header = Text(f"hash_map: {{name}}", font_size=32, color=TEAL).to_edge(UP, buff=1.0)
         rows = VGroup()
         data = entries or [["key", "value"]]
@@ -532,7 +596,15 @@ class CodeVisualization(Scene):
         rows.next_to(header, DOWN, buff=0.3)
         self.hashmap_group = VGroup(header, rows)
         self.play(FadeIn(header), LaggedStart(*[FadeIn(r, shift=RIGHT * 0.15) for r in rows], lag_ratio=0.1))
+        self._hashmap_objects = [header] + list(rows)
         self.wait(0.8)
+
+    def _clear_hashmap(self):
+        targets = [m for m in getattr(self, "_hashmap_objects", []) if m in self.mobjects]
+        if targets:
+            self.play(FadeOut(*targets))
+            self.remove(*targets)
+        self._hashmap_objects = []
 
     def _hashmap_insert(self, name, label, caption):
         if caption:
@@ -550,8 +622,7 @@ class CodeVisualization(Scene):
     def _show_heap(self, values, caption):
         if caption:
             self._show_caption(caption)
-        if self.heap_group and self.heap_group in self.mobjects:
-            self.play(FadeOut(self.heap_group))
+        self._clear_heap()
         title = Text("priority_queue (max-heap)", font_size=28, color=ORANGE).to_edge(UP, buff=1.0)
         nodes = VGroup()
         positions = [UP * 1.2, LEFT * 2 + DOWN * 0.5, RIGHT * 2 + DOWN * 0.5, LEFT * 3.5 + DOWN * 2, RIGHT * 3.5 + DOWN * 2]
@@ -570,7 +641,15 @@ class CodeVisualization(Scene):
             edges.add(Line(nodes[0].get_center(), nodes[2].get_center(), color=GRAY_B))
         self.heap_group = VGroup(title, edges, nodes)
         self.play(Write(title), Create(edges), LaggedStart(*[GrowFromCenter(n[0]) for n in nodes], lag_ratio=0.15))
+        self._heap_objects = [title, edges] + [n[0] for n in nodes] + [n[1] for n in nodes]
         self.wait(0.8)
+
+    def _clear_heap(self):
+        targets = [m for m in getattr(self, "_heap_objects", []) if m in self.mobjects]
+        if targets:
+            self.play(FadeOut(*targets))
+            self.remove(*targets)
+        self._heap_objects = []
 
     def _heap_push(self, label, caption):
         if caption:
@@ -657,4 +736,101 @@ class CodeVisualization(Scene):
             if node_group is not None:
                 self.play(node_group[0].animate.set_color(GREEN).set_fill(GREEN, opacity=0.6))
         self.wait(1.0)
+
+    def _show_chapter(self, text):
+        if not text:
+            return
+        banner = RoundedRectangle(width=11, height=0.9, corner_radius=0.15, color=YELLOW, fill_opacity=0.25)
+        label = Text(str(text), font_size=34, color=YELLOW, font="Consolas", weight=BOLD)
+        label.move_to(banner.get_center())
+        group = VGroup(banner, label)
+        self.play(FadeIn(group, scale=0.92))
+        self.wait(1.0)
+        self.play(FadeOut(group))
+
+    def _show_architecture(self, components, connections, layout, caption):
+        if caption:
+            self._show_caption(caption)
+        self._clear_architecture()
+        fills = {{
+            "client": BLUE,
+            "gateway": PURPLE,
+            "service": TEAL,
+            "queue": GREEN,
+            "cache": YELLOW,
+            "database": ORANGE,
+            "other": GRAY,
+        }}
+        boxes = {{}}
+        group = VGroup()
+        for comp in components:
+            cid = str(comp.get("id"))
+            label = str(comp.get("label") or cid)
+            category = str(comp.get("category") or "other")
+            box = RoundedRectangle(width=2.4, height=0.95, corner_radius=0.12, color=fills.get(category, GRAY), fill_opacity=0.3)
+            text = Text(label, font_size=20, color=WHITE).move_to(box.get_center())
+            item = VGroup(box, text)
+            if cid in layout and isinstance(layout[cid], (list, tuple)) and len(layout[cid]) >= 2:
+                item.move_to(RIGHT * float(layout[cid][0]) + UP * float(layout[cid][1]))
+            boxes[cid] = item
+            group.add(item)
+            self._arch_objects.append(item)
+
+        connections_group = VGroup()
+        for conn in connections:
+            source = str(conn.get("from"))
+            target = str(conn.get("to"))
+            if source in boxes and target in boxes:
+                line = Line(boxes[source].get_center(), boxes[target].get_center(), color=GRAY_B, stroke_width=3)
+                connections_group.add(line)
+                self.arch_connections[(source, target)] = line
+                self.arch_connections[(target, source)] = line
+        if len(connections_group) > 0:
+            self._arch_objects.append(connections_group)
+
+        self.arch_components = boxes
+        self.play(Create(connections_group), LaggedStart(*[FadeIn(item, scale=0.9, shift=UP * 0.2) for item in group], lag_ratio=0.12))
+        self.wait(0.8)
+
+    def _clear_architecture(self):
+        targets = [m for m in self._arch_objects if m in self.mobjects]
+        if targets:
+            self.play(FadeOut(*targets))
+            self.remove(*targets)
+        self._arch_objects = []
+        self.arch_components = {{}}
+        self.arch_connections = {{}}
+
+    def _show_flow(self, source, target, caption):
+        if caption:
+            self._show_caption(caption)
+        if source is not None and target is not None:
+            key = (str(source), str(target))
+            info = self.arch_connections.get(key)
+            if info:
+                arrow = Arrow(
+                    info.get_start(),
+                    info.get_end(),
+                    color=ORANGE,
+                    buff=0.0,
+                    stroke_width=5,
+                    max_tip_length_to_length_ratio=0.12,
+                )
+                self.play(Create(arrow), info.animate.set_color(ORANGE).set_stroke(width=5))
+                self.wait(0.6)
+                self.play(FadeOut(arrow), info.animate.set_color(GRAY_B).set_stroke(width=3))
+            else:
+                self._show_caption(f"flow {{source}} → {{target}}")
+        self.wait(0.4)
+
+    def _highlight_component(self, component, caption):
+        if caption:
+            self._show_caption(caption)
+        if component is not None:
+            item = self.arch_components.get(str(component))
+            if item is not None:
+                self.play(item[0].animate.set_color(YELLOW).set_fill(YELLOW, opacity=0.65).scale(1.08))
+                self.wait(0.6)
+                self.play(item[0].animate.set_fill(item[0].get_color(), opacity=0.3).scale(1 / 1.08))
+        self.wait(0.4)
 """

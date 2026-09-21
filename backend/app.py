@@ -5,9 +5,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from ai import generate_animation_plan
+from analyzer import analyze
 from manim_generator import generate_manim_code
-from parser import parse_code
+from pipeline import build_visualization_plan
 from renderer import render_video
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
@@ -43,11 +43,13 @@ def home():
 
 @app.post("/parse")
 def parse(request: CodeRequest):
-    parsed_code = parse_code(request.code, request.language)
-    animation_plan = generate_animation_plan(parsed_code)
+    parsed_code = analyze(request.code, request.language)
+    animation_plan = build_visualization_plan(request.code, request.language)
     return {
         "success": True,
         "ir": parsed_code,
+        "classification": parsed_code.get("classification"),
+        "complexity": parsed_code.get("complexity"),
         "animation_plan": animation_plan,
     }
 
@@ -55,8 +57,8 @@ def parse(request: CodeRequest):
 @app.post("/generate")
 def generate(request: CodeRequest):
     try:
-        parsed_code = parse_code(request.code, request.language)
-        animation_plan = generate_animation_plan(parsed_code)
+        parsed_code = analyze(request.code, request.language)
+        animation_plan = build_visualization_plan(request.code, request.language)
         manim_code = generate_manim_code(animation_plan)
         video_url = render_video(manim_code)
 
@@ -66,6 +68,8 @@ def generate(request: CodeRequest):
             "algorithm": animation_plan.get("algorithm"),
             "title": animation_plan.get("title"),
             "data_structure": animation_plan.get("data_structure"),
+            "classification": (parsed_code.get("classification") or {}).get("domain"),
+            "complexity": parsed_code.get("complexity"),
         }
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc

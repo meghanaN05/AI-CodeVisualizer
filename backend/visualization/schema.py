@@ -70,8 +70,8 @@ class DslStep(BaseModel):
     action: str
     node: str | int | float | None = None
     edge: list[str] | None = None
-    from_id: str | None = Field(default=None, alias="from")
-    to_id: str | None = Field(default=None, alias="to")
+    from_id: str | int | None = Field(default=None, alias="from")
+    to_id: str | int | None = Field(default=None, alias="to")
     weight: int | float | str | None = None
     caption: str | None = None
     text: str | None = None
