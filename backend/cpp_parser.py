@@ -679,6 +679,9 @@ class CppParser:
         if self._looks_like_insertion_sort():
             return "insertion_sort"
 
+        if "graph" in data_structures and self._looks_like_dijkstra():
+            return "dijkstra"
+
         if "graph" in data_structures and self._looks_like_bfs():
             return "bfs"
 
@@ -801,6 +804,17 @@ class CppParser:
     def _looks_like_bfs(self) -> bool:
         code_lower = self.code.lower()
         return "queue" in code_lower and bool(self.loops or self.calls)
+
+    def _looks_like_dijkstra(self) -> bool:
+        code_lower = self.code.lower()
+        has_pq = "priority_queue" in code_lower
+        has_dist = bool(re.search(r"\bdist\b", code_lower)) and bool(
+            re.search(r"\bdist\s*\[", code_lower)
+        )
+        relax = bool(
+            re.search(r"\bdist\s*\[\s*[^\]]+\s*\]\s*\+", code_lower)
+        ) or bool(re.search(r"dist\s*\[[^\]]+\]\s*[<>]", code_lower))
+        return has_pq and has_dist and relax
 
     def _looks_like_dfs(self) -> bool:
         code_lower = self.code.lower()

@@ -151,7 +151,7 @@ def enrich_ir(ir: dict[str, Any], code: str, language: str) -> dict[str, Any]:
     ir["data_structures"] = merged_structures
 
     ir["concepts"] = _detect_concepts(code, ir)
-    ir["algorithm"] = ir.get("algorithm") or _detect_algorithm(code, ir)
+    ir["algorithm"] = _detect_algorithm(code, ir)
     ir["methods"] = _collect_methods(ir)
     ir["operations"] = _derive_operations(ir)
     return ir
