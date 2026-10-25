@@ -36,10 +36,12 @@ from __future__ import annotations
 
 from typing import Any
 
+from tracing.js_tracer import trace_javascript
 from tracing.python_tracer import trace_python
 
 TRACERS = {
     "python": trace_python,
+    "javascript": trace_javascript,
 }
 
 LANGUAGE_ALIASES = {

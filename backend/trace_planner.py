@@ -109,7 +109,9 @@ class TraceContext:
 
     def user_functions(self) -> Counter:
         return Counter(
-            s["func"] for s in self.steps if s["func"] != "<module>" and not _is_dunder(s["func"])
+            s["func"]
+            for s in self.steps
+            if s["func"] != "<module>" and not _is_constructor(s["func"]) and not _is_anonymous(s["func"])
         )
 
 
@@ -311,7 +313,7 @@ def _behaves_like_stack(snaps: list[tuple[int, dict]]) -> bool:
 
 def _is_recursive(ctx: TraceContext) -> bool:
     for step in ctx.steps:
-        funcs = [f["func"] for f in step["stack"] if not _is_dunder(f["func"])]
+        funcs = [f["func"] for f in step["stack"] if not _is_constructor(f["func"]) and not _is_anonymous(f["func"])]
         if len(funcs) != len(set(funcs)):
             return True
     return False
@@ -511,8 +513,14 @@ _COMPARISON = re.compile(r"<=|>=|==|!=|===|!==|(?<![<\-])<(?![<=])|(?<![>\-])>(?
 def _subscript_reads(line: str, aliases: set[str]) -> tuple[list[str], bool]:
     """Index expressions this line READS from the array, and whether it compares."""
     rhs = line
-    depth = 0
-    for pos, char in enumerate(line):
+    # `if (a[j] < a[m]) m = j;` -- only the condition is read on this line's
+    # test; splitting at the `=` would lose the comparison.
+    condition = re.match(r"^\s*(?:\}\s*)?(?:else\s+)?(?:if|while)\s*\(", line)
+    inner = _balanced(line, condition.end() - 1) if condition else None
+    depth = 0 if inner is None else None
+    if inner is not None:
+        rhs = inner
+    for pos, char in enumerate(line if depth is not None else ""):
         if char in "([{":
             depth += 1
         elif char in ")]}":
@@ -978,7 +986,7 @@ def _build_linked_list(ctx: TraceContext, view: View, out: SceneBuilder) -> None
     last_state = None
     for index, step in enumerate(ctx.steps):
         heap = step["heap"]
-        if not all(ref in heap for ref in order) or _is_dunder(step["func"]):
+        if not all(ref in heap for ref in order) or _is_constructor(step["func"]):
             continue
         links = []
         for ref in order:
@@ -1012,7 +1020,7 @@ def _build_call_stack(ctx: TraceContext, view: View, out: SceneBuilder) -> None:
     open_calls: list[str] = []
     for step in ctx.steps:
         func = step["func"]
-        if _is_dunder(func) or func == "<module>":
+        if _is_constructor(func) or func == "<module>":
             continue
         if step["event"] == "call":
             args = ", ".join(
@@ -1070,7 +1078,7 @@ def _title(ctx: TraceContext, view: View) -> str:
 def _after_line(ctx: TraceContext, index: int) -> str:
     """Caption for the state at steps[index]: the code that just produced it."""
     previous = index - 1
-    while previous >= 0 and _is_dunder(ctx.steps[previous]["func"]):
+    while previous >= 0 and _is_constructor(ctx.steps[previous]["func"]):
         previous -= 1  # constructor internals are setup, not the story
     if previous < 0:
         return "Start"
@@ -1083,8 +1091,13 @@ def _ref(value: Any) -> str | None:
     return value.get("ref") if isinstance(value, dict) else None
 
 
-def _is_dunder(name: str) -> bool:
-    return name.startswith("__") and name.endswith("__")
+def _is_constructor(name: str) -> bool:
+    """Object setup frames across languages (Python __init__, JS constructor, Java <init>)."""
+    return (name.startswith("__") and name.endswith("__")) or name in {"constructor", "<init>", "<clinit>"}
+
+
+def _is_anonymous(name: str) -> bool:
+    return name.startswith("<") and name != "<module>"
 
 
 def _items(obj: dict[str, Any]) -> list:
