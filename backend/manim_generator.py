@@ -175,7 +175,10 @@ class CodeVisualization(MovingCameraScene):
         self.code_line_height = 0.42
         rows = VGroup()
         for number, text in enumerate(self.SOURCE, start=1):
-            code = text.replace("\t", "    ").rstrip().replace(" ", "\u00a0")
+            code = text.replace("\t", "    ").rstrip()
+            if len(code) > 62:
+                code = code[:61] + "\u2026"  # one long literal must not shrink the whole panel
+            code = code.replace(" ", "\u00a0")
             row = Text(f"{{number:>3}}\u00a0\u00a0{{code}}", font="Monospace", font_size=22, color=GRAY_B)
             row.move_to(ORIGIN, aligned_edge=LEFT).shift(DOWN * (number - 1) * self.code_line_height)
             rows.add(row)
