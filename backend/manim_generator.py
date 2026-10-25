@@ -55,6 +55,7 @@ class CodeVisualization(Scene):
         self.hashmap_entries = {{}}
         self.array_anchor = None
         self.named_pointers = None
+        self.collection_group = None
         self.pointer_order = []
         self.current_graph_node = None
 
@@ -131,6 +132,8 @@ class CodeVisualization(Scene):
                 self._show_flow(step.get("from"), step.get("to"), step.get("caption"))
             elif action == "show_pointers":
                 self._show_pointers(step.get("variables", {{}}))
+            elif action == "show_collection":
+                self._show_collection(step.get("text", ""), step.get("values", []), step.get("label", "list"), step.get("caption"))
             elif action == "compare_value":
                 self._compare_value(step.get("index", 0), step.get("caption"))
             elif action == "highlight_indices":
@@ -263,6 +266,32 @@ class CodeVisualization(Scene):
                 self.remove(self.named_pointers)
             self.named_pointers = group
             self.play(FadeIn(group), run_time=0.4)
+
+    def _show_collection(self, name, values, kind, caption):
+        # A second, smaller row for another container the code builds.
+        if caption:
+            self._show_caption(caption)
+        tag = Text(f"{{kind}} {{name}}", font_size=22, color=TEAL)
+        cells = VGroup()
+        for value in values[:16]:
+            box = RoundedRectangle(width=0.75, height=0.6, corner_radius=0.08, color=TEAL, fill_opacity=0.2)
+            label = Text(str(value), font_size=22, color=WHITE)
+            if label.width > 0.65:
+                label.scale_to_fit_width(0.65)
+            cells.add(VGroup(box, label.move_to(box.get_center())))
+        cells.arrange(RIGHT, buff=0.1)
+        if not values:
+            cells = VGroup(Text("(empty)", font_size=22, color=GRAY_B))
+        group = VGroup(tag, cells).arrange(RIGHT, buff=0.3)
+        if group.width > 12.5:
+            group.scale_to_fit_width(12.5)
+        group.move_to(DOWN * 1.2 if self.array_anchor == "top" else UP * 2.6)
+        if self.collection_group is not None:
+            self.play(ReplacementTransform(self.collection_group, group), run_time=0.6)
+        else:
+            self.play(FadeIn(group, shift=UP * 0.1))
+        self.collection_group = group
+        self.wait(0.4)
 
     def _compare_value(self, index, caption):
         if not self.array_boxes:

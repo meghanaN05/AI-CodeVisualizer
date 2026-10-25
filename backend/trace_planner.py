@@ -46,6 +46,9 @@ def plan_from_trace(trace: dict[str, Any], code: str) -> dict[str, Any] | None:
         builder.add("show_caption", text=driver["description"])
 
     VIEW_BUILDERS[view.kind](ctx, view, builder)
+    result = _entry_result(ctx)
+    if result:
+        builder.add("show_caption", text=result)
 
     if trace.get("truncated"):
         builder.add("show_caption", text="Trace stopped at the step limit")
@@ -426,6 +429,7 @@ def _build_array(ctx: TraceContext, view: View, out: SceneBuilder) -> None:
     index_vars = _index_variables(ctx, ctx.all_names(ref))
     last_pointers: dict | None = None
     last_scalars: dict | None = None
+    shown_collections: dict[str, list] = {}
 
     for index, step in enumerate(ctx.steps):
         items = _items_at(step, ref)
@@ -457,8 +461,10 @@ def _build_array(ctx: TraceContext, view: View, out: SceneBuilder) -> None:
                 if isinstance(v, SCALAR_TYPES) and k not in index_vars
             }
             if scalars and scalars != last_scalars:
+                _emit_derived_values(ctx, index, name, items, scalars, last_scalars or {}, out)
                 out.add("show_variables", variables=scalars)
                 last_scalars = scalars
+            _emit_side_collections(step, frame, ref, shown_collections, out)
 
         following = _items_at(ctx.steps[index + 1], ref) if index + 1 < len(ctx.steps) else None
         written = (
@@ -467,6 +473,55 @@ def _build_array(ctx: TraceContext, view: View, out: SceneBuilder) -> None:
             else set()
         )
         last_highlight = _emit_reads(ctx, step, ref, name, items, out, last_highlight, written)
+
+
+def _emit_derived_values(
+    ctx: TraceContext, index: int, name: str, items: list, scalars: dict, before: dict, out: SceneBuilder
+) -> None:
+    """`mini = *min_element(nums...)`: point at the element a new value came from."""
+    if index == 0:
+        return
+    line = _strip_comment(ctx.source(ctx.steps[index - 1]["line"]))
+    if not re.search(rf"(?<![\w.]){re.escape(name)}\b(?!\s*\[)", line):
+        return
+    shown = [_display(v) for v in items]
+    for var, value in scalars.items():
+        if before.get(var) == value or value not in shown:
+            continue
+        if not re.search(rf"\b{re.escape(var)}\s*=(?!=)", line):
+            continue
+        position = shown.index(value)
+        out.add(
+            "highlight_index",
+            index=position,
+            label=var,
+            caption=f"{var} = {value}, which is {name}[{position}]",
+        )
+
+
+def _emit_side_collections(
+    step: Step, frame: dict[str, Any], primary: str, shown: dict[str, list], out: SceneBuilder
+) -> None:
+    """Other lists/sets this function builds (e.g. a set made from the array)."""
+    for var, value in frame["locals"].items():
+        ref = _ref(value)
+        if not ref or ref == primary:
+            continue
+        obj = step["heap"].get(ref, {})
+        if obj.get("kind") not in {"list", "set"}:
+            continue
+        values = [_display(v) for v in obj.get("items") or []]
+        if not _all_scalars(obj.get("items") or []) or shown.get(var) == values:
+            continue
+        shown[var] = values
+        kind = "set" if obj.get("kind") == "set" else "list"
+        out.add(
+            "show_collection",
+            text=var,
+            values=values,
+            label=kind,
+            caption=f"{kind} {var} = {_fmt_list(values)}",
+        )
 
 
 def _emit_array_diff(
@@ -1174,6 +1229,28 @@ def _title(ctx: TraceContext, view: View) -> str:
     if funcs and funcs.most_common(1)[0][1] >= main_steps:
         return f"{funcs.most_common(1)[0][0]}() step by step"
     return "Your code step by step"
+
+
+def _entry_result(ctx: TraceContext) -> str | None:
+    """'f(...) returns X' for the outermost user call (what the code computed)."""
+    ignored = lambda f: f in {"<module>", "<static>"} or _is_constructor(f) or _is_anonymous(f) or (
+        f == "main" and ctx.language in {"java", "cpp"}
+    )
+    top = None
+    for step in ctx.steps:
+        if step["event"] != "return" or ignored(step["func"]):
+            continue
+        depth = sum(1 for frame in step["stack"] if not ignored(frame["func"]))
+        if top is None or depth <= top[0]:
+            top = (depth, step)
+    if top is None:
+        return None
+    step = top[1]
+    value = step.get("return_value")
+    if value is None:
+        return None
+    shown = _short_obj(value, step["heap"]) if _ref(value) else _display(value)
+    return f"{step['func']}() returns {shown}"
 
 
 def _after_line(ctx: TraceContext, index: int) -> str:

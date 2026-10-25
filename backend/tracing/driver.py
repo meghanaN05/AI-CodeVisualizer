@@ -76,7 +76,7 @@ def synthesize_args(params: list[Param], variant: str = "sorted") -> list[tuple[
 _UNKNOWN = object()
 
 
-def candidate_args(params: list[Param], variant: str = "sorted", limit: int = 6) -> list[list[tuple[str, Any]]]:
+def candidate_args(params: list[Param], variant: str = "sorted", limit: int = 8) -> list[list[tuple[str, Any]]]:
     """Several plausible argument sets, so the tracer can keep the one that
     exercises the most of the code (e.g. a k for which a match exists)."""
     base = synthesize_args(params, variant)
@@ -92,7 +92,10 @@ def candidate_args(params: list[Param], variant: str = "sorted", limit: int = 6)
         # next pointers); a permutation of 0..n-1 is valid input for them.
         permutation = list(range(len(array))) if variant == "sorted" else list(PERMUTATION[: len(array)])
         candidates.append([(n, permutation if v is array else v) for n, v in base])
-        picks = [array[1], array[len(array) // 2], array[1] + array[2], array[2] + array[3] + array[4]]
+        # Boundary values (the array's min and max) matter for guards like
+        # `if (min < k) return -1;` that would otherwise skip the rest of the code.
+        picks = [array[1], array[len(array) // 2], array[1] + array[2], array[2] + array[3] + array[4],
+                 min(array), max(array)]
         for position, (name, value) in enumerate(base):
             tunable = _SEARCH_NAMES.match(name) or name.lower() == "k" or not (
                 _SIZE_NAMES.match(name) or _INDEX_NAMES.match(name) or _END_INDEX_NAMES.match(name)
