@@ -1,0 +1,208 @@
+[
+  {
+    "id": "py_bubble_sort_unnamed",
+    "language": "python",
+    "file": "python/bubble_sort_unnamed.py",
+    "note": "Bubble sort under a generic name; must not rely on the function being called bubbleSort.",
+    "expect": {
+      "visual": "array",
+      "events": ["compare_indices", "swap_indices"],
+      "data_values": [5, 1, 4, 2],
+      "final_array": [1, 2, 4, 5]
+    }
+  },
+  {
+    "id": "py_fib_recursion",
+    "language": "python",
+    "file": "python/fib_recursion.py",
+    "expect": {
+      "visual": "call_stack",
+      "events": ["push_stack", "pop_stack"]
+    }
+  },
+  {
+    "id": "py_two_sum",
+    "language": "python",
+    "file": "python/two_sum.py",
+    "expect": {
+      "visual": "hashmap",
+      "events": ["hashmap_insert"],
+      "data_values": [2, 7, 11, 15]
+    }
+  },
+  {
+    "id": "py_bfs_adjacency",
+    "language": "python",
+    "file": "python/bfs_adjacency.py",
+    "expect": {
+      "visual": "graph",
+      "events": ["visit_node"],
+      "data_values": ["S", "X", "Y", "Z"]
+    }
+  },
+  {
+    "id": "py_inorder_treenode",
+    "language": "python",
+    "file": "python/inorder_treenode.py",
+    "note": "Tree is built with constructor calls, not a literal.",
+    "expect": {
+      "visual": "tree",
+      "events": ["highlight_node"],
+      "data_values": [8, 3, 1, 6, 10]
+    }
+  },
+  {
+    "id": "py_binary_search_no_driver",
+    "language": "python",
+    "file": "python/binary_search_no_driver.py",
+    "note": "No call site; the system must synthesize an example input.",
+    "expect": {
+      "visual": "array",
+      "events": ["highlight_index"]
+    }
+  },
+  {
+    "id": "py_reverse_linked_list",
+    "language": "python",
+    "file": "python/reverse_linked_list.py",
+    "expect": {
+      "visual": "linked_list",
+      "data_values": [1, 2, 3]
+    }
+  },
+  {
+    "id": "js_selection_sort",
+    "language": "javascript",
+    "file": "javascript/selection_sort.js",
+    "expect": {
+      "visual": "array",
+      "events": ["compare_indices", "swap_indices"],
+      "data_values": [29, 10, 14, 37, 13],
+      "final_array": [10, 13, 14, 29, 37]
+    }
+  },
+  {
+    "id": "js_valid_parentheses",
+    "language": "javascript",
+    "file": "javascript/valid_parentheses.js",
+    "expect": {
+      "visual": "stack",
+      "events": ["push_stack", "pop_stack"],
+      "data_values": ["(", "[", "{"]
+    }
+  },
+  {
+    "id": "js_dfs_object_graph",
+    "language": "javascript",
+    "file": "javascript/dfs_object_graph.js",
+    "expect": {
+      "visual": "graph",
+      "events": ["visit_node"],
+      "data_values": [1, 2, 3, 4]
+    }
+  },
+  {
+    "id": "js_kadane_no_driver",
+    "language": "javascript",
+    "file": "javascript/kadane_no_driver.js",
+    "note": "No call site; the system must synthesize an example input.",
+    "expect": {
+      "visual": "array",
+      "events": ["highlight_index"]
+    }
+  },
+  {
+    "id": "java_insertion_sort",
+    "language": "java",
+    "file": "java/InsertionSort.java",
+    "expect": {
+      "visual": "array",
+      "events": ["compare_indices"],
+      "data_values": [12, 11, 13, 5, 6],
+      "final_array": [5, 6, 11, 12, 13]
+    }
+  },
+  {
+    "id": "java_factorial",
+    "language": "java",
+    "file": "java/Factorial.java",
+    "expect": {
+      "visual": "call_stack",
+      "events": ["push_stack", "pop_stack"]
+    }
+  },
+  {
+    "id": "java_graph_bfs",
+    "language": "java",
+    "file": "java/GraphBFS.java",
+    "note": "Graph built imperatively with addEdge calls.",
+    "expect": {
+      "visual": "graph",
+      "events": ["visit_node"],
+      "data_values": [0, 1, 2, 3]
+    }
+  },
+  {
+    "id": "java_word_count",
+    "language": "java",
+    "file": "java/WordCount.java",
+    "expect": {
+      "visual": "hashmap",
+      "events": ["hashmap_insert"],
+      "data_values": ["apple", "pear", "fig"]
+    }
+  },
+  {
+    "id": "cpp_dijkstra_edges",
+    "language": "cpp",
+    "file": "cpp/dijkstra_edges.cpp",
+    "expect": {
+      "visual": "graph",
+      "events": ["visit_node", "relax_edge"],
+      "data_values": [0, 1, 2, 3]
+    }
+  },
+  {
+    "id": "cpp_quick_sort",
+    "language": "cpp",
+    "file": "cpp/quick_sort.cpp",
+    "expect": {
+      "visual": "array",
+      "events": ["compare_indices", "swap_indices"],
+      "data_values": [10, 7, 8, 9, 1, 5],
+      "final_array": [1, 5, 7, 8, 9, 10]
+    }
+  },
+  {
+    "id": "cpp_postorder_tree",
+    "language": "cpp",
+    "file": "cpp/postorder_tree.cpp",
+    "note": "Tree built with pointer assignments.",
+    "expect": {
+      "visual": "tree",
+      "events": ["highlight_node"],
+      "data_values": [1, 2, 3, 4, 5]
+    }
+  },
+  {
+    "id": "cpp_reverse_two_pointers",
+    "language": "cpp",
+    "file": "cpp/reverse_two_pointers.cpp",
+    "expect": {
+      "visual": "array",
+      "events": ["swap_indices"],
+      "data_values": [1, 2, 3, 4, 5],
+      "final_array": [5, 4, 3, 2, 1]
+    }
+  },
+  {
+    "id": "cpp_climbing_stairs_dp",
+    "language": "cpp",
+    "file": "cpp/climbing_stairs_dp.cpp",
+    "expect": {
+      "visual": "array",
+      "events": ["highlight_index"],
+      "final_array": [1, 1, 2, 3, 5, 8]
+    }
+  }
+]
