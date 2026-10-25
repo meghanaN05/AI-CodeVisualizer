@@ -27,11 +27,17 @@ def render_video(manim_code: str) -> str:
     scene_file = SCENES_DIR / f"scene_{scene_id}.py"
     scene_file.write_text(manim_code, encoding="utf-8")
 
-    video_path = _run_manim(scene_file, scene_id)
+    media_dir = MEDIA_DIR / scene_id
+    try:
+        video_path = _run_manim(scene_file, scene_id, media_dir)
+    finally:
+        # Each render gets its own media dir: Manim writes and deletes text
+        # SVGs there, which races when two jobs render the same text at once.
+        shutil.rmtree(media_dir, ignore_errors=True)
     return f"/videos/{video_path.name}"
 
 
-def _run_manim(scene_file: Path, scene_id: str) -> Path:
+def _run_manim(scene_file: Path, scene_id: str, media_dir: Path) -> Path:
     manim_exe = shutil.which("manim")
     if manim_exe:
         command = [
@@ -40,7 +46,7 @@ def _run_manim(scene_file: Path, scene_id: str) -> Path:
             "--resolution",
             "1280,720",
             "--disable_caching",
-            f"--media_dir={MEDIA_DIR}",
+            f"--media_dir={media_dir}",
             str(scene_file),
             "CodeVisualization",
         ]
@@ -55,7 +61,7 @@ def _run_manim(scene_file: Path, scene_id: str) -> Path:
             "--resolution",
             "1280,720",
             "--disable_caching",
-            f"--media_dir={MEDIA_DIR}",
+            f"--media_dir={media_dir}",
             str(scene_file),
             "CodeVisualization",
         ]
@@ -74,7 +80,7 @@ def _run_manim(scene_file: Path, scene_id: str) -> Path:
         error = result.stderr.strip() or result.stdout.strip() or "Unknown Manim error"
         raise RuntimeError(f"Manim rendering failed: {error[-2000:]}")
 
-    generated = _find_generated_video(scene_id)
+    generated = _find_generated_video(scene_id, media_dir)
     if generated is None:
         raise RuntimeError("Manim finished but no MP4 file was produced")
 
@@ -83,10 +89,10 @@ def _run_manim(scene_file: Path, scene_id: str) -> Path:
     return final_path
 
 
-def _find_generated_video(scene_id: str) -> Path | None:
+def _find_generated_video(scene_id: str, media_dir: Path) -> Path | None:
     scene_stem = f"scene_{scene_id}"
     candidates = sorted(
-        MEDIA_DIR.rglob("CodeVisualization.mp4"),
+        media_dir.rglob("CodeVisualization.mp4"),
         key=lambda path: path.stat().st_mtime,
         reverse=True,
     )

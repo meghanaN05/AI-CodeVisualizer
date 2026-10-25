@@ -75,8 +75,26 @@ def synthesize_args(params: list[Param], variant: str = "sorted") -> list[tuple[
 
 _UNKNOWN = object()
 
+# Runs longer than this make long videos without showing more of the code,
+# so among inputs covering the same lines the shorter run wins.
+COMFORTABLE_STEPS = 400
 
-def candidate_args(params: list[Param], variant: str = "sorted", limit: int = 8) -> list[list[tuple[str, Any]]]:
+
+def input_score(trace: dict[str, Any], entry_frames_only: set[str] = frozenset({"<module>", "main"})) -> tuple:
+    """How good a traced example input is: runs cleanly, finishes, executes
+    as many distinct lines as possible, and is not needlessly long (e.g. a
+    2^n subset loop on 7 elements)."""
+    steps = trace.get("steps") or []
+    covered = len({s["line"] for s in steps if s["func"] not in entry_frames_only})
+    return (
+        not trace.get("error"),
+        not trace.get("truncated"),
+        covered,
+        -max(0, len(steps) - COMFORTABLE_STEPS),
+    )
+
+
+def candidate_args(params: list[Param], variant: str = "sorted", limit: int = 10) -> list[list[tuple[str, Any]]]:
     """Several plausible argument sets, so the tracer can keep the one that
     exercises the most of the code (e.g. a k for which a match exists)."""
     base = synthesize_args(params, variant)
@@ -92,6 +110,8 @@ def candidate_args(params: list[Param], variant: str = "sorted", limit: int = 8)
         # next pointers); a permutation of 0..n-1 is valid input for them.
         permutation = list(range(len(array))) if variant == "sorted" else list(PERMUTATION[: len(array)])
         candidates.append([(n, permutation if v is array else v) for n, v in base])
+        # A short array keeps exponential / nested-loop code to a watchable length.
+        candidates.append([(n, array[:4] if v is array else v) for n, v in base])
         # Boundary values (the array's min and max) matter for guards like
         # `if (min < k) return -1;` that would otherwise skip the rest of the code.
         picks = [array[1], array[len(array) // 2], array[1] + array[2], array[2] + array[3] + array[4],

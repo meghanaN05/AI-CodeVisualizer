@@ -21,6 +21,11 @@ class CodeVisualization(MovingCameraScene):
     SOURCE = json.loads({source_json!r})
 
     def play(self, *args, **kwargs):
+        # An animation group over nothing (e.g. an empty array) is a no-op,
+        # not an error.
+        args = [a for a in args if not (isinstance(a, AnimationGroup) and not a.animations)]
+        if not args:
+            return
         kwargs["run_time"] = kwargs.get("run_time", 1.0) * self.speed
         super().play(*args, **kwargs)
 
@@ -235,9 +240,11 @@ class CodeVisualization(MovingCameraScene):
     def _create_array(self, values, anchor=None, caption=None):
         if caption:
             self._show_caption(caption)
-        if getattr(self, "array_boxes", None) and any(b in self.mobjects for b in self.array_boxes):
-            self.play(FadeOut(*self.array_boxes), FadeOut(*self.array_labels))
-            self.remove(*self.array_boxes, *self.array_labels)
+        on_screen = [m for m in self.array_boxes + self.array_labels if m in self.mobjects]
+        if on_screen:
+            self.play(FadeOut(*on_screen))
+            self.remove(*on_screen)
+        self._clear_pointer()
         self.array_boxes = []
         self.array_labels = []
         self.array_values = [str(v) for v in values]
@@ -265,6 +272,11 @@ class CodeVisualization(MovingCameraScene):
         elif anchor == "top":
             group.shift(UP * 1.5)
         self.array_group = group
+        if not values:
+            empty = Text("(empty)", font_size=30, color=GRAY_B).move_to(group.get_center() if len(group) else (UP * 1.5 if anchor == "top" else DOWN * 2.2 if anchor == "bottom" else ORIGIN))
+            self.array_labels = [empty]
+            self.play(FadeIn(empty))
+            return
         self.play(LaggedStart(*[Create(box) for box in self.array_boxes], lag_ratio=0.15))
         self.play(LaggedStart(*[Write(label) for label in self.array_labels], lag_ratio=0.1))
         self.wait(0.5)

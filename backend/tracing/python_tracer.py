@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from tracing.driver import DriverPlan, Param, candidate_args
+from tracing.driver import DriverPlan, Param, candidate_args, input_score
 from tracing.sandbox import MAX_TRACE_STEPS, parse_trace_output, run_sandboxed
 
 RUNNER = Path(__file__).resolve().parent / "python_runner.py"
@@ -37,14 +37,11 @@ def _best_driven_trace(code: str, variant: str) -> tuple[DriverPlan, dict[str, A
     best = None
     for driver in _plan_drivers(code, variant):
         driven = _run(code + _render_call(driver))
-        score = (not driven["error"], _lines_covered(driven))
+        score = input_score(driven)
         if best is None or score > best[0]:
             best = (score, driver, driven)
     return (best[1], best[2]) if best else None
 
-
-def _lines_covered(trace: dict[str, Any]) -> int:
-    return len({s["line"] for s in trace["steps"] if s["func"] != "<module>"})
 
 
 def _run(code: str) -> dict[str, Any]:

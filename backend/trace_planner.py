@@ -239,7 +239,7 @@ def _choose_view(ctx: TraceContext) -> View:
             # Each call builds its own lists (e.g. merge sort): the story is
             # the calls and what they return, not any single list.
             return View("call_stack")
-        return View("array", best)
+        return View("array", _long_lived_array(ctx, objects, best))
 
     if _is_recursive(ctx):
         return View("call_stack")
@@ -389,6 +389,30 @@ def _is_recursive(ctx: TraceContext) -> bool:
         if len(funcs) != len(set(funcs)):
             return True
     return False
+
+
+def _presence(ctx: TraceContext, snaps: list[tuple[int, dict]]) -> float:
+    return len(snaps) / max(len(ctx.steps), 1)
+
+
+def _long_lived_array(ctx: TraceContext, objects: dict[str, list], busiest: str) -> str:
+    """Prefer an array that lives through the run over a per-iteration
+    temporary (e.g. `vector<int> temp` rebuilt every loop pass); the
+    temporary is still shown, as a side collection."""
+    if _presence(ctx, objects[busiest]) >= 0.6:
+        return busiest
+    lasting = [
+        ref
+        for ref, snaps in objects.items()
+        if ref != busiest
+        and _is_scalar_list(snaps)
+        and snaps[-1][1].get("kind") == "list"
+        and len(_items(snaps[-1][1])) > 1
+        and _presence(ctx, snaps) >= 0.8
+    ]
+    used = [(ref, _read_count(ctx, ref) + _mutation_count(objects[ref])) for ref in lasting]
+    used = [(ref, n) for ref, n in used if n > 0]
+    return max(used, key=lambda item: item[1])[0] if used else busiest
 
 
 def _shared_across_recursion(ctx: TraceContext, ref: str) -> bool:

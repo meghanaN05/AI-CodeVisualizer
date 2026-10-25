@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Any
 
 from tracing.cpp.instrument import FunctionInfo, Instrumented, ParamInfo, instrument
-from tracing.driver import DriverPlan, Param, candidate_args
+from tracing.driver import DriverPlan, Param, candidate_args, input_score
 from tracing.python_tracer import _mutates_array_arg
 from tracing.sandbox import MAX_TRACE_STEPS, WALL_SECONDS, run_sandboxed
 
@@ -88,7 +88,7 @@ def _trace_with_driver(code: str, plan: Instrumented) -> dict[str, Any]:
         best = None
         for offset, args in enumerate(arg_sets):
             trace = _execute(binary, start + offset)
-            score = (not trace["error"], _lines_covered(trace))
+            score = input_score(trace)
             if best is None or score > best[0]:
                 best = (score, DriverPlan(fn.name, fn.owner, args, variant), trace)
         return best[1], best[2]
@@ -98,10 +98,6 @@ def _trace_with_driver(code: str, plan: Instrumented) -> dict[str, Any]:
         driver, trace = best_of(len(sorted_sets), shuffled_sets, "shuffled")
     trace["driver"] = driver.to_dict()
     return trace
-
-
-def _lines_covered(trace: dict[str, Any]) -> int:
-    return len({s["line"] for s in trace["steps"] if s["func"] != "main"})
 
 
 # --------------------------------------------------------------- compile/run
