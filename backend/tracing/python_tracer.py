@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -49,9 +50,27 @@ def _lines_covered(trace: dict[str, Any]) -> int:
 def _run(code: str) -> dict[str, Any]:
     result = run_sandboxed(
         [sys.executable, "-I", str(RUNNER)],
-        stdin=json.dumps({"code": code, "max_steps": MAX_STEPS}),
+        stdin=json.dumps({"code": _python2_prints(code), "max_steps": MAX_STEPS}),
     )
     return parse_trace_output(result, "python")
+
+
+_PY2_PRINT = re.compile(r"^(\s*)print(?!\s*\()\s+(?![=.\[])(.+?)\s*(#.*)?$", re.MULTILINE)
+
+
+def _python2_prints(code: str) -> str:
+    """Rewrite Python 2 `print x` statements in place (same line numbers)."""
+    try:
+        ast.parse(code)
+        return code
+    except SyntaxError:
+        pass
+    rewritten = _PY2_PRINT.sub(lambda m: f"{m.group(1)}print({m.group(2).rstrip(',')})", code)
+    try:
+        ast.parse(rewritten)
+        return rewritten
+    except SyntaxError:
+        return code
 
 
 def _has_user_calls(trace: dict[str, Any]) -> bool:

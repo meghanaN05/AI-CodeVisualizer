@@ -53,7 +53,7 @@ def plan_from_trace(trace: dict[str, Any], code: str) -> dict[str, Any] | None:
         builder.add("show_caption", text=f"Program stopped: {trace['error'][:80]}")
 
     scenes = builder.finish()
-    if len(scenes) <= 1 + bool(driver):
+    if not any(s["action"] not in {"show_title", "show_caption"} for s in scenes):
         return None
     return {
         "algorithm": None,
@@ -403,6 +403,9 @@ def _build_array(ctx: TraceContext, view: View, out: SceneBuilder) -> None:
     ref = view.ref
     previous: list | None = None
     last_highlight: tuple | None = None
+    index_vars = _index_variables(ctx, ctx.all_names(ref))
+    last_pointers: dict | None = None
+    last_scalars: dict | None = None
 
     for index, step in enumerate(ctx.steps):
         items = _items_at(step, ref)
@@ -412,11 +415,30 @@ def _build_array(ctx: TraceContext, view: View, out: SceneBuilder) -> None:
         display = [_display(v) for v in items]
 
         if previous is None:
-            out.add("create_array", values=display, caption=f"{name} = {_fmt_list(display)}")
+            out.add("create_array", values=display, layout={"anchor": "top"}, caption=f"{name} = {_fmt_list(display)}")
         elif items != previous:
             _emit_array_diff(out, name, previous, items, display)
             last_highlight = None
         previous = items
+
+        frame = _frame_holding(step, ref) or (step["stack"][-1] if step["stack"] else None)
+        if frame is not None and not _is_constructor(frame["func"]):
+            pointers = {
+                var: frame["locals"][var]
+                for var in index_vars
+                if _is_int(frame["locals"].get(var)) and 0 <= frame["locals"][var] < len(items)
+            }
+            if pointers != last_pointers and (pointers or last_pointers):
+                out.add("show_pointers", variables=pointers)
+                last_pointers = pointers
+            scalars = {
+                k: _display(v)
+                for k, v in frame["locals"].items()
+                if isinstance(v, SCALAR_TYPES) and k not in index_vars
+            }
+            if scalars and scalars != last_scalars:
+                out.add("show_variables", variables=scalars)
+                last_scalars = scalars
 
         following = _items_at(ctx.steps[index + 1], ref) if index + 1 < len(ctx.steps) else None
         written = (
@@ -486,7 +508,14 @@ def _emit_reads(
     if key == last:
         return last
     shown = [_display(v) for v in items]
-    if is_comparison and len(indices) >= 2:
+    if len(indices) >= 3 or (len(indices) == 2 and not is_comparison):
+        verb = "Check" if is_comparison else "Read"
+        out.add(
+            "highlight_indices",
+            values=[i for i, _ in indices],
+            caption=f"{verb} " + ", ".join(f"{name}[{expr}]={shown[i]}" for i, expr in indices),
+        )
+    elif is_comparison and len(indices) >= 2:
         (i, _), (j, _) = indices[:2]
         out.add(
             "compare_indices",
@@ -496,13 +525,13 @@ def _emit_reads(
         )
     else:
         verb = "Check" if is_comparison else "Read"
-        for i, expr in indices[:2]:
-            out.add(
-                "highlight_index",
-                index=i,
-                label=expr if expr != str(i) else f"i={i}",
-                caption=f"{verb} {name}[{expr}] = {shown[i]}",
-            )
+        i, expr = indices[0]
+        out.add(
+            "highlight_index",
+            index=i,
+            label=expr if expr != str(i) else f"i={i}",
+            caption=f"{verb} {name}[{expr}] = {shown[i]}",
+        )
     return key
 
 
@@ -539,6 +568,22 @@ def _subscript_reads(line: str, aliases: set[str]) -> tuple[list[str], bool]:
 
     cleaned = re.sub(r"->|<<|>>|=>|<\s*[\w:]+(\s*,\s*[\w:]+)*\s*>", " ", rhs)
     return reads, bool(_COMPARISON.search(cleaned))
+
+
+def _index_variables(ctx: TraceContext, names: set[str]) -> list[str]:
+    """Plain variables the code uses directly as indexes into this array."""
+    found: list[str] = []
+    for line in ctx.lines:
+        for name in names:
+            for match in re.finditer(rf"(?<![\w.]){re.escape(name)}\s*\[\s*([A-Za-z_]\w*)\s*\]", line):
+                var = match.group(1)
+                if var not in found and var not in names:
+                    found.append(var)
+    return found
+
+
+def _is_int(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
 
 
 def _balanced(text: str, open_pos: int) -> str | None:

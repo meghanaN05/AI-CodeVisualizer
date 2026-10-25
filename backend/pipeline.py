@@ -39,6 +39,14 @@ def build_visualization_plan(
         plan = plan_from_trace(trace, code)
         if plan is not None:
             return plan
+        # The code was run; a template video with made-up data would be
+        # misleading, so report why there is nothing to show instead.
+        if trace.get("error"):
+            raise ValueError(f"Your code could not run: {trace['error']}")
+        raise ValueError(
+            "Your code ran but did nothing that can be animated. "
+            "Add a call to your function (or a main) with example input."
+        )
 
     ir = analyze(code, language)
     domain = ir.get("classification", {}).get("domain", "generic")

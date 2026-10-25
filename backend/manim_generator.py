@@ -54,6 +54,8 @@ class CodeVisualization(Scene):
         self.ll_group = None
         self.hashmap_entries = {{}}
         self.array_anchor = None
+        self.named_pointers = None
+        self.pointer_order = []
         self.current_graph_node = None
 
         for step in self.SCENES:
@@ -127,6 +129,10 @@ class CodeVisualization(Scene):
                 )
             elif action == "show_flow":
                 self._show_flow(step.get("from"), step.get("to"), step.get("caption"))
+            elif action == "show_pointers":
+                self._show_pointers(step.get("variables", {{}}))
+            elif action == "highlight_indices":
+                self._highlight_indices(step.get("values", []), step.get("caption"))
             elif action == "set_index":
                 self._set_index(step.get("index", 0), step.get("values", []), step.get("caption"))
             elif action == "show_grid":
@@ -186,9 +192,13 @@ class CodeVisualization(Scene):
 
         if group.width > 12.5:
             group.scale_to_fit_width(12.5)
+        if anchor is None:
+            anchor = self.array_anchor
         self.array_anchor = anchor
         if anchor == "bottom":
             group.shift(DOWN * 2.2)
+        elif anchor == "top":
+            group.shift(UP * 1.5)
         self.array_group = group
         self.play(LaggedStart(*[Create(box) for box in self.array_boxes], lag_ratio=0.15))
         self.play(LaggedStart(*[Write(label) for label in self.array_labels], lag_ratio=0.1))
@@ -208,7 +218,7 @@ class CodeVisualization(Scene):
             animations.append(box.animate.set_color(color).set_fill(color, opacity=opacity))
 
         self._clear_pointer()
-        if self.array_anchor == "bottom":
+        if self.array_anchor == "bottom" or self.named_pointers is not None:
             self.play(*animations)
             self.wait(0.5)
             return
@@ -220,6 +230,49 @@ class CodeVisualization(Scene):
 
         self.play(*animations, GrowArrow(self.pointer[0]), FadeIn(self.pointer[1]))
         self.wait(0.7)
+
+    def _show_pointers(self, pointers):
+        # Named index variables (i, left, right...) as arrows under their cells.
+        if not self.array_boxes:
+            return
+        for name in pointers:
+            if name not in self.pointer_order:
+                self.pointer_order.append(name)
+        colors = [YELLOW, ORANGE, PINK, TEAL, GREEN, PURPLE]
+        group = VGroup()
+        stacked = {{}}
+        for name in self.pointer_order:
+            index = pointers.get(name)
+            if index is None or not (0 <= int(index) < len(self.array_boxes)):
+                continue
+            index = int(index)
+            depth = stacked.get(index, 0)
+            stacked[index] = depth + 1
+            color = colors[self.pointer_order.index(name) % len(colors)]
+            box = self.array_boxes[index]
+            tip = box.get_bottom() + DOWN * 0.1
+            arrow = Arrow(tip + DOWN * (0.7 + depth * 0.45), tip, color=color, buff=0, stroke_width=4, max_tip_length_to_length_ratio=0.25)
+            label = Text(name, font_size=22, color=color).next_to(arrow, DOWN, buff=0.05)
+            group.add(VGroup(arrow, label))
+        if self.named_pointers is not None and len(self.named_pointers) == len(group):
+            self.play(Transform(self.named_pointers, group), run_time=0.5)
+        else:
+            if self.named_pointers is not None:
+                self.remove(self.named_pointers)
+            self.named_pointers = group
+            self.play(FadeIn(group), run_time=0.4)
+
+    def _highlight_indices(self, indices, caption):
+        if not self.array_boxes:
+            return
+        if caption:
+            self._show_caption(caption)
+        chosen = {{int(i) for i in indices if 0 <= int(i) < len(self.array_boxes)}}
+        self.play(*[
+            box.animate.set_color(YELLOW if i in chosen else BLUE).set_fill(YELLOW if i in chosen else BLUE, opacity=0.45 if i in chosen else 0.15)
+            for i, box in enumerate(self.array_boxes)
+        ])
+        self.wait(0.5)
 
     def _clear_pointer(self):
         # The arrow and its label were added to the scene individually, so
@@ -614,6 +667,9 @@ class CodeVisualization(Scene):
     def _show_variables(self, variables, caption):
         if caption:
             self._show_caption(caption)
+        if self.array_anchor == "top" and self.array_boxes:
+            self._show_variable_row(variables)
+            return
         lines = [f"{{name}} = {{value}}" for name, value in variables.items()]
         text = "\\n".join(lines)
         panel = VGroup()
@@ -627,6 +683,20 @@ class CodeVisualization(Scene):
         else:
             self.var_panel = panel
             self.play(FadeIn(panel))
+
+    def _show_variable_row(self, variables):
+        items = [f"{{name}} = {{value}}" for name, value in variables.items()]
+        rows = [items[i:i + 4] for i in range(0, len(items), 4)][:2]
+        text = Text("\\n".join("     ".join(row) for row in rows), font_size=24, color=WHITE, line_spacing=1.2)
+        if text.width > 12:
+            text.scale_to_fit_width(12)
+        bg = RoundedRectangle(width=text.width + 0.6, height=text.height + 0.4, corner_radius=0.12, color=BLUE_D, fill_opacity=0.35)
+        panel = VGroup(bg, text.move_to(bg.get_center())).move_to(DOWN * 2.35)
+        if self.var_panel is not None:
+            self.play(Transform(self.var_panel, panel), run_time=0.4)
+        else:
+            self.var_panel = panel
+            self.play(FadeIn(panel), run_time=0.4)
 
     def _push_stack(self, label, caption):
         if caption:

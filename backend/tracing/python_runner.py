@@ -19,6 +19,19 @@ MAX_ITEMS = 64
 MAX_DEPTH = 12
 
 
+# Pasted solutions are often Python 2 (LeetCode-style); these names are the
+# common ones that differ, mapped to their Python 3 equivalents.
+PYTHON2_BUILTINS = {
+    "xrange": range,
+    "raw_input": input,
+    "unicode": str,
+    "basestring": str,
+    "long": int,
+    "unichr": chr,
+    "reduce": __import__("functools").reduce,
+}
+
+
 class StepLimitReached(Exception):
     pass
 
@@ -170,7 +183,7 @@ def main() -> None:
                     snapshot(frame, event, arg)
         return tracer
 
-    namespace = {"__name__": "__main__"}
+    namespace = {"__name__": "__main__", **PYTHON2_BUILTINS}
     try:
         compiled = compile(code, FILENAME, "exec")
     except SyntaxError as exc:

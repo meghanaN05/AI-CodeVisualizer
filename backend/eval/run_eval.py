@@ -47,6 +47,11 @@ VISUAL_ACTIONS: dict[str, set[str]] = {
     "linked_list": {"show_linked_list"},
 }
 
+# Newer DSL actions that express the same event as the expected one.
+EVENT_EQUIVALENTS: dict[str, set[str]] = {
+    "highlight_index": {"highlight_index", "highlight_indices"},
+}
+
 ARRAY_STATE_ACTIONS = {"create_array", "swap_indices", "set_index"}
 
 # Fields whose values are prose or geometry rather than the program's data;
@@ -131,7 +136,9 @@ def score_plan(plan: dict[str, Any], expect: dict[str, Any]) -> dict[str, float]
 
     events = expect.get("events") or []
     if events:
-        checks["events"] = sum(1 for e in events if e in actions) / len(events)
+        checks["events"] = sum(
+            1 for e in events if actions & EVENT_EQUIVALENTS.get(e, {e})
+        ) / len(events)
 
     data_values = expect.get("data_values") or []
     if data_values:
