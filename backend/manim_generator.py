@@ -8,6 +8,7 @@ from typing import Any
 
 def generate_manim_code(animation_plan: dict[str, Any]) -> str:
     scenes_json = json.dumps(animation_plan.get("scenes", []))
+    source_json = json.dumps((animation_plan.get("source") or "").splitlines())
     title = animation_plan.get("title", "Code Visualization")
 
     return f"""from manim import *
@@ -15,10 +16,21 @@ import json
 import math
 
 
-class CodeVisualization(Scene):
+class CodeVisualization(MovingCameraScene):
     SCENES = json.loads({scenes_json!r})
+    SOURCE = json.loads({source_json!r})
+
+    def play(self, *args, **kwargs):
+        kwargs["run_time"] = kwargs.get("run_time", 1.0) * self.speed
+        super().play(*args, **kwargs)
+
+    def wait(self, duration=1.0, *args, **kwargs):
+        super().wait(duration * self.speed, *args, **kwargs)
 
     def construct(self):
+        # Plans with many steps play faster rather than being truncated.
+        # Every executed line is shown; long runs play faster, never cut.
+        self.speed = max(0.08, min(1.0, 80 / max(len(self.SCENES), 1)))
         self.camera.background_color = "#1a1a2e"
         self.array_boxes = []
         self.array_labels = []
@@ -39,13 +51,32 @@ class CodeVisualization(Scene):
         self.arch_components = {{}}
         self.arch_connections = {{}}
         self._arch_objects = []
+        self.grid_cells = {{}}
+        self.grid_group = None
+        self.grid_highlight = None
+        self.ll_group = None
+        self.hashmap_entries = {{}}
+        self.array_anchor = None
+        self.named_pointers = None
+        self.collection_group = None
+        self.pointer_order = []
+        self.current_graph_node = None
+
+        self.code_rows = []
+        if self.SOURCE:
+            self._setup_code_panel()
 
         for step in self.SCENES:
             action = step.get("action")
+            if step.get("line") and self.code_rows:
+                self._goto_line(int(step["line"]))
+            if action == "code_line":
+                self._show_caption(step.get("caption"))
+                continue
             if action == "show_title":
                 self._show_title(step.get("text", {title!r}))
             elif action == "create_array":
-                self._create_array(step.get("values", []))
+                self._create_array(step.get("values", []), (step.get("layout") or {{}}).get("anchor"), step.get("caption"))
             elif action == "highlight_index":
                 self._highlight_index(step.get("index", 0), step.get("label", ""), step.get("caption"))
             elif action == "highlight_range":
@@ -83,7 +114,7 @@ class CodeVisualization(Scene):
             elif action == "show_hashmap":
                 self._show_hashmap(step.get("text", "map"), step.get("values", []), step.get("caption"))
             elif action == "hashmap_insert":
-                self._hashmap_insert(step.get("text", "map"), step.get("label", ""), step.get("caption"))
+                self._hashmap_insert(step.get("text", "map"), step.get("label", ""), step.get("caption"), step.get("values"))
             elif action == "show_heap":
                 self._show_heap(step.get("values", []), step.get("caption"))
             elif action == "heap_push":
@@ -111,10 +142,76 @@ class CodeVisualization(Scene):
                 )
             elif action == "show_flow":
                 self._show_flow(step.get("from"), step.get("to"), step.get("caption"))
+            elif action == "show_pointers":
+                self._show_pointers(step.get("variables", {{}}))
+            elif action == "show_collection":
+                self._show_collection(step.get("text", ""), step.get("values", []), step.get("label", "list"), step.get("caption"))
+            elif action == "compare_value":
+                self._compare_value(step.get("index", 0), step.get("caption"))
+            elif action == "highlight_indices":
+                self._highlight_indices(step.get("values", []), step.get("caption"))
+            elif action == "set_index":
+                self._set_index(step.get("index", 0), step.get("values", []), step.get("caption"))
+            elif action == "show_grid":
+                self._show_grid(step.get("values", []), step.get("caption"))
+            elif action == "set_cell":
+                self._set_cell(step.get("row", 0), step.get("col", 0), step.get("values", []), step.get("caption"))
+            elif action == "highlight_cell":
+                self._highlight_cell(step.get("row", 0), step.get("col", 0), step.get("caption"))
+            elif action == "show_linked_list":
+                self._show_linked_list(step.get("nodes", []), step.get("edges", []), step.get("variables", {{}}), step.get("caption"))
             elif action == "highlight_component":
                 self._highlight_component(step.get("component"), step.get("caption"))
 
         self.wait(1)
+
+    def _setup_code_panel(self):
+        # Zoom out so the original 14 x 8 area (where every view draws) sits on
+        # the right, and the code gets the new space on the left.
+        self.camera.frame.scale(1.6).move_to(LEFT * 4.28)
+        panel_center = LEFT * 11.4
+        background = RoundedRectangle(width=8.2, height=12.4, corner_radius=0.2, color=GRAY_D, fill_color="#11111f", fill_opacity=1)
+        background.move_to(panel_center)
+        self.code_line_height = 0.42
+        rows = VGroup()
+        for number, text in enumerate(self.SOURCE, start=1):
+            code = text.replace("\t", "    ").rstrip()
+            if len(code) > 62:
+                code = code[:61] + "\u2026"  # one long literal must not shrink the whole panel
+            code = code.replace(" ", "\u00a0")
+            row = Text(f"{{number:>3}}\u00a0\u00a0{{code}}", font="Monospace", font_size=22, color=GRAY_B)
+            row.move_to(ORIGIN, aligned_edge=LEFT).shift(DOWN * (number - 1) * self.code_line_height)
+            rows.add(row)
+        widest = max((r.width for r in rows), default=1)
+        if widest > 7.6:
+            rows.scale(7.6 / widest, about_point=ORIGIN)
+            self.code_line_height *= 7.6 / widest
+        rows.shift(panel_center + LEFT * 3.8 + UP * 5.7 - rows[0].get_left() * RIGHT - rows[0].get_center() * UP)
+        self.code_group = rows
+        self.code_rows = list(rows)
+        self.code_marker = Rectangle(width=8.0, height=self.code_line_height * 1.05, stroke_width=0, fill_color=YELLOW, fill_opacity=0.18)
+        self.code_marker.move_to(panel_center * RIGHT + rows[0].get_center() * UP)
+        self.code_current = None
+        self.add(background, self.code_marker, rows)
+
+    def _goto_line(self, line):
+        if not (1 <= line <= len(self.code_rows)) or line == self.code_current:
+            return
+        row = self.code_rows[line - 1]
+        anims = []
+        # Scroll long code so the current line stays in view.
+        if row.get_center()[1] < -5.6 or row.get_center()[1] > 5.9:
+            offset = UP * (3.0 - row.get_center()[1])
+            anims.append(self.code_group.animate.shift(offset))
+            target_y = 3.0
+        else:
+            target_y = row.get_center()[1]
+        anims.append(self.code_marker.animate.move_to(self.code_marker.get_center() * RIGHT + target_y * UP))
+        if self.code_current is not None:
+            anims.append(self.code_rows[self.code_current - 1].animate.set_color(GRAY_B))
+        anims.append(row.animate.set_color(YELLOW))
+        self.code_current = line
+        self.play(*anims, run_time=0.3)
 
     def _show_title(self, text):
         title = Text(text, font_size=48, color=YELLOW)
@@ -135,7 +232,9 @@ class CodeVisualization(Scene):
             self.play(FadeIn(self.caption))
         self.wait(0.8)
 
-    def _create_array(self, values):
+    def _create_array(self, values, anchor=None, caption=None):
+        if caption:
+            self._show_caption(caption)
         if getattr(self, "array_boxes", None) and any(b in self.mobjects for b in self.array_boxes):
             self.play(FadeOut(*self.array_boxes), FadeOut(*self.array_labels))
             self.remove(*self.array_boxes, *self.array_labels)
@@ -156,6 +255,15 @@ class CodeVisualization(Scene):
             self.array_labels.append(label)
             group.add(item)
 
+        if group.width > 12.5:
+            group.scale_to_fit_width(12.5)
+        if anchor is None:
+            anchor = self.array_anchor
+        self.array_anchor = anchor
+        if anchor == "bottom":
+            group.shift(DOWN * 2.2)
+        elif anchor == "top":
+            group.shift(UP * 1.5)
         self.array_group = group
         self.play(LaggedStart(*[Create(box) for box in self.array_boxes], lag_ratio=0.15))
         self.play(LaggedStart(*[Write(label) for label in self.array_labels], lag_ratio=0.1))
@@ -174,8 +282,11 @@ class CodeVisualization(Scene):
             opacity = 0.45 if i == index else 0.15
             animations.append(box.animate.set_color(color).set_fill(color, opacity=opacity))
 
-        if self.pointer:
-            self.remove(self.pointer)
+        self._clear_pointer()
+        if self.array_anchor == "bottom" or self.named_pointers is not None:
+            self.play(*animations)
+            self.wait(0.5)
+            return
         target = self.array_boxes[index].get_bottom() + DOWN * 0.2
         self.pointer = Arrow(start=target + DOWN * 0.8, end=target, color=YELLOW, buff=0.05)
         pointer_label = Text(str(label or f"i = {{index}}"), font_size=24, color=YELLOW)
@@ -185,9 +296,98 @@ class CodeVisualization(Scene):
         self.play(*animations, GrowArrow(self.pointer[0]), FadeIn(self.pointer[1]))
         self.wait(0.7)
 
+    def _show_pointers(self, pointers):
+        # Named index variables (i, left, right...) as arrows under their cells.
+        if not self.array_boxes:
+            return
+        for name in pointers:
+            if name not in self.pointer_order:
+                self.pointer_order.append(name)
+        colors = [YELLOW, ORANGE, PINK, TEAL, GREEN, PURPLE]
+        group = VGroup()
+        stacked = {{}}
+        for name in self.pointer_order:
+            index = pointers.get(name)
+            if index is None or not (0 <= int(index) < len(self.array_boxes)):
+                continue
+            index = int(index)
+            depth = stacked.get(index, 0)
+            stacked[index] = depth + 1
+            color = colors[self.pointer_order.index(name) % len(colors)]
+            box = self.array_boxes[index]
+            tip = box.get_bottom() + DOWN * 0.1
+            arrow = Arrow(tip + DOWN * (0.7 + depth * 0.45), tip, color=color, buff=0, stroke_width=4, max_tip_length_to_length_ratio=0.25)
+            label = Text(name, font_size=22, color=color).next_to(arrow, DOWN, buff=0.05)
+            group.add(VGroup(arrow, label))
+        if self.named_pointers is not None and len(self.named_pointers) == len(group):
+            self.play(Transform(self.named_pointers, group), run_time=0.5)
+        else:
+            if self.named_pointers is not None:
+                self.remove(self.named_pointers)
+            self.named_pointers = group
+            self.play(FadeIn(group), run_time=0.4)
+
+    def _show_collection(self, name, values, kind, caption):
+        # A second, smaller row for another container the code builds.
+        if caption:
+            self._show_caption(caption)
+        tag = Text(f"{{kind}} {{name}}", font_size=22, color=TEAL)
+        cells = VGroup()
+        for value in values[:16]:
+            box = RoundedRectangle(width=0.75, height=0.6, corner_radius=0.08, color=TEAL, fill_opacity=0.2)
+            label = Text(str(value), font_size=22, color=WHITE)
+            if label.width > 0.65:
+                label.scale_to_fit_width(0.65)
+            cells.add(VGroup(box, label.move_to(box.get_center())))
+        cells.arrange(RIGHT, buff=0.1)
+        if not values:
+            cells = VGroup(Text("(empty)", font_size=22, color=GRAY_B))
+        group = VGroup(tag, cells).arrange(RIGHT, buff=0.3)
+        if group.width > 12.5:
+            group.scale_to_fit_width(12.5)
+        group.move_to(DOWN * 1.2 if self.array_anchor == "top" else UP * 2.6)
+        if self.collection_group is not None:
+            self.play(ReplacementTransform(self.collection_group, group), run_time=0.6)
+        else:
+            self.play(FadeIn(group, shift=UP * 0.1))
+        self.collection_group = group
+        self.wait(0.4)
+
+    def _compare_value(self, index, caption):
+        if not self.array_boxes:
+            return
+        if caption:
+            self._show_caption(caption)
+        i = max(0, min(int(index), len(self.array_boxes) - 1))
+        self.play(*[
+            box.animate.set_color(ORANGE if j == i else BLUE).set_fill(ORANGE if j == i else BLUE, opacity=0.45 if j == i else 0.15)
+            for j, box in enumerate(self.array_boxes)
+        ])
+        self.wait(0.5)
+
+    def _highlight_indices(self, indices, caption):
+        if not self.array_boxes:
+            return
+        if caption:
+            self._show_caption(caption)
+        chosen = {{int(i) for i in indices if 0 <= int(i) < len(self.array_boxes)}}
+        self.play(*[
+            box.animate.set_color(YELLOW if i in chosen else BLUE).set_fill(YELLOW if i in chosen else BLUE, opacity=0.45 if i in chosen else 0.15)
+            for i, box in enumerate(self.array_boxes)
+        ])
+        self.wait(0.5)
+
+    def _clear_pointer(self):
+        # The arrow and its label were added to the scene individually, so
+        # removing only their VGroup would leave both on screen.
+        if self.pointer:
+            self.remove(*self.pointer.submobjects, self.pointer)
+            self.pointer = None
+
     def _compare_indices(self, index, other, caption):
         if not self.array_boxes:
             return
+        self._clear_pointer()
         i = max(0, min(int(index), len(self.array_boxes) - 1))
         j = max(0, min(int(other), len(self.array_boxes) - 1))
         if caption:
@@ -202,11 +402,43 @@ class CodeVisualization(Scene):
         self.wait(0.6)
 
     def _swap_indices(self, index, other, values, caption):
-        if values:
-            self._create_array(values)
         if caption:
             self._show_caption(caption)
-        self.wait(0.5)
+        count = len(self.array_boxes)
+        i, j = int(index), int(other)
+        if not values or len(values) != count or not (0 <= i < count and 0 <= j < count) or i == j:
+            if values:
+                self._create_array(values)
+            return
+        li, lj = self.array_labels[i], self.array_labels[j]
+        self.play(
+            li.animate(path_arc=PI / 2).move_to(self.array_boxes[j].get_center()),
+            lj.animate(path_arc=PI / 2).move_to(self.array_boxes[i].get_center()),
+            self.array_boxes[i].animate.set_color(GREEN).set_fill(GREEN, opacity=0.35),
+            self.array_boxes[j].animate.set_color(GREEN).set_fill(GREEN, opacity=0.35),
+        )
+        self.array_labels[i], self.array_labels[j] = lj, li
+        self.array_values = [str(v) for v in values]
+        self.play(*[b.animate.set_color(BLUE).set_fill(BLUE, opacity=0.15) for b in (self.array_boxes[i], self.array_boxes[j])])
+
+    def _set_index(self, index, values, caption):
+        if not self.array_boxes or len(values) != len(self.array_boxes):
+            self._create_array(values, caption=caption)
+            return
+        if caption:
+            self._show_caption(caption)
+        i = max(0, min(int(index), len(self.array_boxes) - 1))
+        box = self.array_boxes[i]
+        old = self.array_labels[i]
+        new = Text(str(values[i]), font_size=36, color=WHITE)
+        if self.array_group is not None and self.array_group.width > 0:
+            new.scale(box.width / 1.3)  # follow the array's fit-to-frame scaling
+        new.move_to(box.get_center())
+        if new.width > box.width * 0.9:
+            new.scale_to_fit_width(box.width * 0.9)
+        self.play(Transform(old, new), box.animate.set_color(GREEN).set_fill(GREEN, opacity=0.45))
+        self.array_values = [str(v) for v in values]
+        self.play(box.animate.set_color(BLUE).set_fill(BLUE, opacity=0.15), run_time=0.4)
 
     def _show_tree(self, tree, layout=None):
         self._clear_tree()
@@ -328,6 +560,18 @@ class CodeVisualization(Scene):
 
     def _visit_node(self, node, caption):
         key = str(node)
+        if key in getattr(self, "graph_nodes", {{}}):
+            if caption:
+                self._show_caption(caption)
+            anims = []
+            previous = self.current_graph_node
+            if previous is not None and previous in self.graph_nodes and previous != key:
+                anims.append(self.graph_nodes[previous][0].animate.set_color(GREEN).set_fill(GREEN, opacity=0.35))
+            anims.append(self.graph_nodes[key][0].animate.set_color(YELLOW).set_fill(YELLOW, opacity=0.5))
+            self.current_graph_node = key
+            self.play(*anims)
+            self.wait(0.4)
+            return
         if key in self.tree_nodes:
             check = Text("✓", font_size=28, color=GREEN).next_to(self.tree_nodes[key], UP, buff=0.15)
             if caption:
@@ -526,6 +770,9 @@ class CodeVisualization(Scene):
     def _show_variables(self, variables, caption):
         if caption:
             self._show_caption(caption)
+        if self.array_anchor == "top" and self.array_boxes:
+            self._show_variable_row(variables)
+            return
         lines = [f"{{name}} = {{value}}" for name, value in variables.items()]
         text = "\\n".join(lines)
         panel = VGroup()
@@ -535,9 +782,24 @@ class CodeVisualization(Scene):
         panel.add(bg, label)
         panel.to_edge(RIGHT, buff=0.5)
         if self.var_panel:
-            self.play(FadeOut(self.var_panel))
-        self.var_panel = panel
-        self.play(FadeIn(panel))
+            self.play(Transform(self.var_panel, panel), run_time=0.5)
+        else:
+            self.var_panel = panel
+            self.play(FadeIn(panel))
+
+    def _show_variable_row(self, variables):
+        items = [f"{{name}} = {{value}}" for name, value in variables.items()]
+        rows = [items[i:i + 4] for i in range(0, len(items), 4)][:3]
+        text = Text("\\n".join("     ".join(row) for row in rows), font_size=24, color=WHITE, line_spacing=1.2)
+        if text.width > 12:
+            text.scale_to_fit_width(12)
+        bg = RoundedRectangle(width=text.width + 0.6, height=text.height + 0.4, corner_radius=0.12, color=BLUE_D, fill_opacity=0.35)
+        panel = VGroup(bg, text.move_to(bg.get_center())).move_to(DOWN * 2.35)
+        if self.var_panel is not None:
+            self.play(Transform(self.var_panel, panel), run_time=0.4)
+        else:
+            self.var_panel = panel
+            self.play(FadeIn(panel), run_time=0.4)
 
     def _push_stack(self, label, caption):
         if caption:
@@ -582,42 +844,63 @@ class CodeVisualization(Scene):
         if caption:
             self._show_caption(caption)
         self._clear_hashmap()
-        header = Text(f"hash_map: {{name}}", font_size=32, color=TEAL).to_edge(UP, buff=1.0)
-        rows = VGroup()
-        data = entries or [["key", "value"]]
-        for i, entry in enumerate(data[:5]):
-            key = str(entry[0]) if isinstance(entry, (list, tuple)) and entry else str(entry)
-            val = str(entry[1]) if isinstance(entry, (list, tuple)) and len(entry) > 1 else "..."
-            box = RoundedRectangle(width=7, height=0.7, corner_radius=0.08, color=TEAL, fill_opacity=0.2)
-            text = Text(f"  {{key}}  →  {{val}}", font_size=22, color=WHITE, font="Consolas")
-            text.move_to(box.get_center())
-            row = VGroup(box, text).shift(DOWN * i * 0.85)
-            rows.add(row)
-        rows.next_to(header, DOWN, buff=0.3)
-        self.hashmap_group = VGroup(header, rows)
-        self.play(FadeIn(header), LaggedStart(*[FadeIn(r, shift=RIGHT * 0.15) for r in rows], lag_ratio=0.1))
-        self._hashmap_objects = [header] + list(rows)
-        self.wait(0.8)
+        self.hashmap_name = name
+        self.hashmap_entries = {{}}
+        for entry in entries or []:
+            if isinstance(entry, (list, tuple)) and entry:
+                self.hashmap_entries[str(entry[0])] = str(entry[1]) if len(entry) > 1 else ""
+        self.hashmap_group = self._hashmap_table(None)
+        self.play(FadeIn(self.hashmap_group, shift=DOWN * 0.1))
+        self.wait(0.4)
+
+    def _hashmap_table(self, changed_key):
+        header = Text(f"hash_map: {{self.hashmap_name}}", font_size=28, color=TEAL)
+        items = list(self.hashmap_entries.items())
+        capacity = 12
+        hidden = max(0, len(items) - capacity)
+        if hidden:
+            # Keep the most recently touched entries in view.
+            keep = [kv for kv in items if kv[0] == changed_key]
+            items = [kv for kv in items if kv[0] != changed_key][-(capacity - 1 - len(keep)):] + keep
+        columns = 1 if len(items) <= 6 else 2
+        width = 6.0 if columns == 1 else 3.6
+        cells = VGroup()
+        for i, (key, val) in enumerate(items):
+            color = GREEN if key == changed_key else TEAL
+            box = RoundedRectangle(width=width, height=0.48, corner_radius=0.08, color=color, fill_opacity=0.3 if key == changed_key else 0.15)
+            text = Text(f"{{key}}  →  {{val}}", font_size=20, color=WHITE, font="Consolas")
+            if text.width > width * 0.9:
+                text.scale_to_fit_width(width * 0.9)
+            cell = VGroup(box, text.move_to(box.get_center()))
+            col, row = (0, i) if columns == 1 else (i // 6, i % 6)
+            cell.move_to(RIGHT * col * (width + 0.2) + DOWN * row * 0.56)
+            cells.add(cell)
+        if not items:
+            cells.add(Text("(empty)", font_size=22, color=GRAY_B))
+        cells.next_to(header, DOWN, buff=0.25, aligned_edge=LEFT)
+        group = VGroup(header, cells)
+        if hidden:
+            group.add(Text(f"+{{hidden}} more", font_size=20, color=GRAY_B).next_to(cells, DOWN, buff=0.1, aligned_edge=LEFT))
+        group.to_edge(UP, buff=0.6).to_edge(LEFT, buff=0.6)
+        return group
 
     def _clear_hashmap(self):
-        targets = [m for m in getattr(self, "_hashmap_objects", []) if m in self.mobjects]
-        if targets:
-            self.play(FadeOut(*targets))
-            self.remove(*targets)
-        self._hashmap_objects = []
+        if self.hashmap_group is not None and self.hashmap_group in self.mobjects:
+            self.play(FadeOut(self.hashmap_group))
+            self.remove(self.hashmap_group)
+        self.hashmap_group = None
 
-    def _hashmap_insert(self, name, label, caption):
+    def _hashmap_insert(self, name, label, caption, values=None):
         if caption:
             self._show_caption(caption)
-        box = RoundedRectangle(width=7, height=0.7, corner_radius=0.08, color=GREEN, fill_opacity=0.35)
-        text = Text(f"  + {{label}}", font_size=22, color=WHITE, font="Consolas")
-        text.move_to(box.get_center())
-        row = VGroup(box, text)
-        if self.hashmap_group:
-            row.next_to(self.hashmap_group, DOWN, buff=0.2)
-        self.play(FadeIn(row, shift=UP * 0.2))
-        self.wait(0.6)
-        self.play(FadeOut(row))
+        if not values or self.hashmap_group is None:
+            return
+        key, val = str(values[0][0]), str(values[0][1])
+        self.hashmap_entries[key] = val
+        table = self._hashmap_table(key)
+        self.play(ReplacementTransform(self.hashmap_group, table), run_time=0.6)
+        self.hashmap_group = table
+        self.wait(0.3)
 
     def _show_heap(self, values, caption):
         if caption:
@@ -821,6 +1104,107 @@ class CodeVisualization(Scene):
                 self.play(FadeOut(arrow), info.animate.set_color(GRAY_B).set_stroke(width=3))
             else:
                 self._show_caption(f"flow {{source}} → {{target}}")
+        self.wait(0.4)
+
+    def _show_grid(self, values, caption):
+        if caption:
+            self._show_caption(caption)
+        if self.grid_group is not None:
+            self.play(FadeOut(self.grid_group))
+        rows = len(values)
+        cols = max((len(r) for r in values), default=0)
+        if not rows or not cols:
+            return
+        cell = min(1.0, 5.2 / rows, 11.0 / cols)
+        self.grid_cells = {{}}
+        self.grid_highlight = None
+        group = VGroup()
+        for r, row in enumerate(values):
+            for c, value in enumerate(row):
+                box = Square(side_length=cell * 0.94, color=BLUE, fill_opacity=0.15)
+                label = Text(str(value), font_size=max(14, int(30 * cell)), color=WHITE)
+                if label.width > box.width * 0.85:
+                    label.scale_to_fit_width(box.width * 0.85)
+                item = VGroup(box, label.move_to(box.get_center()))
+                item.move_to(RIGHT * (c - (cols - 1) / 2) * cell + UP * ((rows - 1) / 2 - r) * cell)
+                self.grid_cells[(r, c)] = item
+                group.add(item)
+        group.shift(UP * 0.4)
+        self.grid_group = group
+        self.play(FadeIn(group, lag_ratio=0.02))
+        self.wait(0.4)
+
+    def _set_cell(self, row, col, values, caption):
+        if caption:
+            self._show_caption(caption)
+        item = self.grid_cells.get((int(row), int(col)))
+        if item is None:
+            self._show_grid(values, None)
+            return
+        box, old = item[0], item[1]
+        new = Text(str(values[int(row)][int(col)]), font_size=max(14, int(30 * box.width / 0.94)), color=WHITE)
+        if new.width > box.width * 0.85:
+            new.scale_to_fit_width(box.width * 0.85)
+        new.move_to(box.get_center())
+        self.play(Transform(old, new), box.animate.set_color(GREEN).set_fill(GREEN, opacity=0.45))
+        self.play(box.animate.set_color(TEAL).set_fill(TEAL, opacity=0.3), run_time=0.3)
+
+    def _highlight_cell(self, row, col, caption):
+        if caption:
+            self._show_caption(caption)
+        item = self.grid_cells.get((int(row), int(col)))
+        if item is None:
+            return
+        anims = []
+        if self.grid_highlight is not None and self.grid_highlight is not item:
+            anims.append(self.grid_highlight[0].animate.set_stroke(BLUE, width=4))
+        anims.append(item[0].animate.set_stroke(YELLOW, width=8))
+        self.grid_highlight = item
+        self.play(*anims, run_time=0.5)
+
+    def _show_linked_list(self, nodes, edges, pointers, caption):
+        if caption:
+            self._show_caption(caption)
+        count = len(nodes)
+        if not count:
+            return
+        spacing = min(2.2, 12.0 / max(count, 1))
+        boxes = []
+        group = VGroup()
+        for i, value in enumerate(nodes):
+            box = RoundedRectangle(width=1.1, height=0.8, corner_radius=0.1, color=BLUE, fill_opacity=0.2)
+            label = Text(str(value), font_size=30, color=WHITE).move_to(box.get_center())
+            node = VGroup(box, label).move_to(RIGHT * (i - (count - 1) / 2) * spacing + UP * 0.6)
+            boxes.append(node)
+            group.add(node)
+        for edge in edges:
+            a, b = int(edge["from"]), int(edge["to"])
+            if not (0 <= a < count and 0 <= b < count) or a == b:
+                continue
+            if b == a + 1:
+                arrow = Arrow(boxes[a].get_right(), boxes[b].get_left(), buff=0.05, color=GRAY_B, stroke_width=3)
+            else:
+                start, end = boxes[a].get_top(), boxes[b].get_top()
+                arrow = CurvedArrow(start, end, angle=-PI / 2.5 if b > a else PI / 2.5, color=ORANGE)
+            group.add(arrow)
+        below = {{}}
+        null_names = []
+        for name, index in (pointers or {{}}).items():
+            if index is None or not (0 <= int(index) < count):
+                null_names.append(name)
+                continue
+            depth = below.get(int(index), 0)
+            below[int(index)] = depth + 1
+            tag = Text(str(name), font_size=24, color=YELLOW)
+            tag.next_to(boxes[int(index)], DOWN, buff=0.35 + depth * 0.4)
+            group.add(tag)
+        if null_names:
+            group.add(Text(", ".join(null_names) + " = null", font_size=24, color=GRAY_B).to_edge(LEFT, buff=0.6).shift(DOWN * 1.6))
+        if self.ll_group is not None:
+            self.play(ReplacementTransform(self.ll_group, group), run_time=0.8)
+        else:
+            self.play(FadeIn(group))
+        self.ll_group = group
         self.wait(0.4)
 
     def _highlight_component(self, component, caption):

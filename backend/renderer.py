@@ -37,6 +37,8 @@ def _run_manim(scene_file: Path, scene_id: str) -> Path:
         command = [
             manim_exe,
             "-ql",
+            "--resolution",
+            "1280,720",
             "--disable_caching",
             f"--media_dir={MEDIA_DIR}",
             str(scene_file),
@@ -50,6 +52,8 @@ def _run_manim(scene_file: Path, scene_id: str) -> Path:
             "-m",
             "manim",
             "-ql",
+            "--resolution",
+            "1280,720",
             "--disable_caching",
             f"--media_dir={MEDIA_DIR}",
             str(scene_file),
@@ -62,7 +66,7 @@ def _run_manim(scene_file: Path, scene_id: str) -> Path:
         text=True,
         encoding="utf-8",
         errors="replace",
-        timeout=600,
+        timeout=1800,
         cwd=str(SCENES_DIR),
     )
 

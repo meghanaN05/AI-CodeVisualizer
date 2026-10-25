@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+import jobs
 from analyzer import analyze
 from manim_generator import generate_manim_code
 from pipeline import build_visualization_plan
@@ -54,22 +55,35 @@ def parse(request: CodeRequest):
     }
 
 
-@app.post("/generate")
+@app.post("/generate", status_code=202)
 def generate(request: CodeRequest):
-    try:
-        parsed_code = analyze(request.code, request.language)
-        animation_plan = build_visualization_plan(request.code, request.language)
-        manim_code = generate_manim_code(animation_plan)
-        video_url = render_video(manim_code)
+    """Start rendering in the background; poll GET /jobs/{job_id} for the result."""
+    code, language = request.code, request.language
 
+    def work(report):
+        animation_plan = build_visualization_plan(code, language, report)
+        report("rendering")
+        video_url = render_video(generate_manim_code(animation_plan))
         return {
-            "success": True,
             "video_url": video_url,
             "algorithm": animation_plan.get("algorithm"),
             "title": animation_plan.get("title"),
             "data_structure": animation_plan.get("data_structure"),
-            "classification": (parsed_code.get("classification") or {}).get("domain"),
-            "complexity": parsed_code.get("complexity"),
+            "scene_count": len(animation_plan.get("scenes") or []),
         }
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    job = jobs.submit(work)
+    return {"job_id": job["id"], "status": job["status"]}
+
+
+@app.get("/jobs/{job_id}")
+def job_status(job_id: str):
+    job = jobs.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Unknown job id")
+    return {
+        "job_id": job["id"],
+        "status": job["status"],
+        "result": job["result"],
+        "error": job["error"],
+    }
