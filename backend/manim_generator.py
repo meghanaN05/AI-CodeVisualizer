@@ -18,7 +18,16 @@ import math
 class CodeVisualization(Scene):
     SCENES = json.loads({scenes_json!r})
 
+    def play(self, *args, **kwargs):
+        kwargs["run_time"] = kwargs.get("run_time", 1.0) * self.speed
+        super().play(*args, **kwargs)
+
+    def wait(self, duration=1.0, *args, **kwargs):
+        super().wait(duration * self.speed, *args, **kwargs)
+
     def construct(self):
+        # Plans with many steps play faster rather than being truncated.
+        self.speed = max(0.3, min(1.0, 60 / max(len(self.SCENES), 1)))
         self.camera.background_color = "#1a1a2e"
         self.array_boxes = []
         self.array_labels = []
@@ -43,7 +52,8 @@ class CodeVisualization(Scene):
         self.grid_group = None
         self.grid_highlight = None
         self.ll_group = None
-        self.hashmap_rows = {{}}
+        self.hashmap_entries = {{}}
+        self.array_anchor = None
         self.current_graph_node = None
 
         for step in self.SCENES:
@@ -176,6 +186,7 @@ class CodeVisualization(Scene):
 
         if group.width > 12.5:
             group.scale_to_fit_width(12.5)
+        self.array_anchor = anchor
         if anchor == "bottom":
             group.shift(DOWN * 2.2)
         self.array_group = group
@@ -197,6 +208,10 @@ class CodeVisualization(Scene):
             animations.append(box.animate.set_color(color).set_fill(color, opacity=opacity))
 
         self._clear_pointer()
+        if self.array_anchor == "bottom":
+            self.play(*animations)
+            self.wait(0.5)
+            return
         target = self.array_boxes[index].get_bottom() + DOWN * 0.2
         self.pointer = Arrow(start=target + DOWN * 0.8, end=target, color=YELLOW, buff=0.05)
         pointer_label = Text(str(label or f"i = {{index}}"), font_size=24, color=YELLOW)
@@ -608,9 +623,10 @@ class CodeVisualization(Scene):
         panel.add(bg, label)
         panel.to_edge(RIGHT, buff=0.5)
         if self.var_panel:
-            self.play(FadeOut(self.var_panel))
-        self.var_panel = panel
-        self.play(FadeIn(panel))
+            self.play(Transform(self.var_panel, panel), run_time=0.5)
+        else:
+            self.var_panel = panel
+            self.play(FadeIn(panel))
 
     def _push_stack(self, label, caption):
         if caption:
@@ -655,64 +671,63 @@ class CodeVisualization(Scene):
         if caption:
             self._show_caption(caption)
         self._clear_hashmap()
-        header = Text(f"hash_map: {{name}}", font_size=32, color=TEAL).to_edge(UP, buff=1.0)
-        rows = VGroup()
-        data = entries or [["key", "value"]]
-        self.hashmap_rows = {{}}
-        for i, entry in enumerate(data[:7]):
-            key = str(entry[0]) if isinstance(entry, (list, tuple)) and entry else str(entry)
-            val = str(entry[1]) if isinstance(entry, (list, tuple)) and len(entry) > 1 else "..."
-            box = RoundedRectangle(width=7, height=0.7, corner_radius=0.08, color=TEAL, fill_opacity=0.2)
-            text = Text(f"  {{key}}  →  {{val}}", font_size=22, color=WHITE, font="Consolas")
-            text.move_to(box.get_center())
-            row = VGroup(box, text).shift(DOWN * i * 0.85)
-            rows.add(row)
-            self.hashmap_rows[key] = row
-        rows.next_to(header, DOWN, buff=0.3)
-        self.hashmap_group = VGroup(header, rows)
-        self.play(FadeIn(header), LaggedStart(*[FadeIn(r, shift=RIGHT * 0.15) for r in rows], lag_ratio=0.1))
-        self._hashmap_objects = [header] + list(rows)
-        self.wait(0.8)
+        self.hashmap_name = name
+        self.hashmap_entries = {{}}
+        for entry in entries or []:
+            if isinstance(entry, (list, tuple)) and entry:
+                self.hashmap_entries[str(entry[0])] = str(entry[1]) if len(entry) > 1 else ""
+        self.hashmap_group = self._hashmap_table(None)
+        self.play(FadeIn(self.hashmap_group, shift=DOWN * 0.1))
+        self.wait(0.4)
+
+    def _hashmap_table(self, changed_key):
+        header = Text(f"hash_map: {{self.hashmap_name}}", font_size=28, color=TEAL)
+        items = list(self.hashmap_entries.items())
+        capacity = 12
+        hidden = max(0, len(items) - capacity)
+        if hidden:
+            # Keep the most recently touched entries in view.
+            keep = [kv for kv in items if kv[0] == changed_key]
+            items = [kv for kv in items if kv[0] != changed_key][-(capacity - 1 - len(keep)):] + keep
+        columns = 1 if len(items) <= 6 else 2
+        width = 6.0 if columns == 1 else 3.6
+        cells = VGroup()
+        for i, (key, val) in enumerate(items):
+            color = GREEN if key == changed_key else TEAL
+            box = RoundedRectangle(width=width, height=0.48, corner_radius=0.08, color=color, fill_opacity=0.3 if key == changed_key else 0.15)
+            text = Text(f"{{key}}  →  {{val}}", font_size=20, color=WHITE, font="Consolas")
+            if text.width > width * 0.9:
+                text.scale_to_fit_width(width * 0.9)
+            cell = VGroup(box, text.move_to(box.get_center()))
+            col, row = (0, i) if columns == 1 else (i // 6, i % 6)
+            cell.move_to(RIGHT * col * (width + 0.2) + DOWN * row * 0.56)
+            cells.add(cell)
+        if not items:
+            cells.add(Text("(empty)", font_size=22, color=GRAY_B))
+        cells.next_to(header, DOWN, buff=0.25, aligned_edge=LEFT)
+        group = VGroup(header, cells)
+        if hidden:
+            group.add(Text(f"+{{hidden}} more", font_size=20, color=GRAY_B).next_to(cells, DOWN, buff=0.1, aligned_edge=LEFT))
+        group.to_edge(UP, buff=0.6).to_edge(LEFT, buff=0.6)
+        return group
 
     def _clear_hashmap(self):
-        targets = [m for m in getattr(self, "_hashmap_objects", []) if m in self.mobjects]
-        if targets:
-            self.play(FadeOut(*targets))
-            self.remove(*targets)
-        self._hashmap_objects = []
+        if self.hashmap_group is not None and self.hashmap_group in self.mobjects:
+            self.play(FadeOut(self.hashmap_group))
+            self.remove(self.hashmap_group)
+        self.hashmap_group = None
 
     def _hashmap_insert(self, name, label, caption, values=None):
         if caption:
             self._show_caption(caption)
-        if values and self.hashmap_group is not None:
-            key, val = str(values[0][0]), str(values[0][1])
-            text = Text(f"  {{key}}  →  {{val}}", font_size=22, color=WHITE, font="Consolas")
-            row = self.hashmap_rows.get(key)
-            if row is not None:
-                text.move_to(row[0].get_center())
-                self.play(Transform(row[1], text), row[0].animate.set_color(GREEN))
-                self.play(row[0].animate.set_color(TEAL), run_time=0.4)
-                return
-            if len(self.hashmap_rows) < 7:
-                box = RoundedRectangle(width=7, height=0.7, corner_radius=0.08, color=GREEN, fill_opacity=0.25)
-                rows = self.hashmap_group[1]
-                anchor = rows[-1] if len(rows) else self.hashmap_group[0]
-                new_row = VGroup(box, text.move_to(box.get_center())).next_to(anchor, DOWN, buff=0.15)
-                rows.add(new_row)
-                self.hashmap_rows[key] = new_row
-                self._hashmap_objects.append(new_row)
-                self.play(FadeIn(new_row, shift=DOWN * 0.15))
-                self.play(box.animate.set_color(TEAL), run_time=0.4)
-                return
-        box = RoundedRectangle(width=7, height=0.7, corner_radius=0.08, color=GREEN, fill_opacity=0.35)
-        text = Text(f"  + {{label}}", font_size=22, color=WHITE, font="Consolas")
-        text.move_to(box.get_center())
-        row = VGroup(box, text)
-        if self.hashmap_group:
-            row.next_to(self.hashmap_group, DOWN, buff=0.2)
-        self.play(FadeIn(row, shift=UP * 0.2))
-        self.wait(0.6)
-        self.play(FadeOut(row))
+        if not values or self.hashmap_group is None:
+            return
+        key, val = str(values[0][0]), str(values[0][1])
+        self.hashmap_entries[key] = val
+        table = self._hashmap_table(key)
+        self.play(ReplacementTransform(self.hashmap_group, table), run_time=0.6)
+        self.hashmap_group = table
+        self.wait(0.3)
 
     def _show_heap(self, values, caption):
         if caption:

@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useState } from "react";
 import { generateVideo } from "./api";
 import Header from "./components/Header";
 import CodeEditorPanel from "./components/CodeEditorPanel";
@@ -27,22 +27,8 @@ function App() {
   const [meta, setMeta] = useState(null);
   const [error, setError] = useState("");
 
-  const timers = useRef([]);
-
-  const clearStageTimers = () => {
-    timers.current.forEach(clearTimeout);
-    timers.current = [];
-  };
-
-  // The backend performs parse -> plan -> render as a single synchronous
-  // call, so there's no real progress feed. These staged messages are a
-  // simulated, best-effort approximation to keep the wait feeling honest
-  // and informative rather than a single opaque spinner.
-  const runStagedProgress = () => {
-    setStageIndex(0);
-    timers.current.push(setTimeout(() => setStageIndex(1), 1200));
-    timers.current.push(setTimeout(() => setStageIndex(2), 2800));
-  };
+  // Backend job stages, in order, mapped onto the progress steps shown.
+  const STAGE_INDEX = { queued: 0, tracing: 0, planning: 1, rendering: 2 };
 
   const handleGenerate = async () => {
     if (!code.trim()) {
@@ -54,10 +40,12 @@ function App() {
     setError("");
     setVideoUrl(null);
     setMeta(null);
-    runStagedProgress();
+    setStageIndex(0);
 
     try {
-      const result = await generateVideo(code, language);
+      const result = await generateVideo(code, language, (stage) =>
+        setStageIndex(STAGE_INDEX[stage] ?? 0),
+      );
 
       setVideoUrl(result.video_url);
       setMeta({
@@ -69,7 +57,6 @@ function App() {
       setError(err.message || "Failed to generate visualization.");
       console.error(err);
     } finally {
-      clearStageTimers();
       setLoading(false);
     }
   };

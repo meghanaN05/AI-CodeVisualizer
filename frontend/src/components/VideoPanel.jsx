@@ -1,7 +1,7 @@
 import { CheckIcon, DownloadIcon, FilmIcon, LoaderIcon } from "./icons";
 
 const STAGES = [
-  { id: "parse", label: "Parsing code" },
+  { id: "trace", label: "Running your code" },
   { id: "plan", label: "Planning visualization" },
   { id: "render", label: "Rendering video" },
 ];

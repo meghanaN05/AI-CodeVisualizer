@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from tracing.driver import DriverPlan, Param, synthesize_args
+from tracing.driver import DriverPlan, Param, candidate_args
 from tracing.sandbox import parse_trace_output, run_sandboxed
 
 RUNNER = Path(__file__).resolve().parent / "python_runner.py"
@@ -20,15 +20,30 @@ def trace_python(code: str) -> dict[str, Any]:
     if trace["error"] or _has_user_calls(trace):
         return trace
 
-    driver = _plan_driver(code, "sorted")
-    if driver is None:
+    best = _best_driven_trace(code, "sorted")
+    if best is None:
         return trace
-    driven = _run(code + _render_call(driver))
+    driver, driven = best
     if _mutates_array_arg(driven, driver):
-        driver = _plan_driver(code, "shuffled") or driver
-        driven = _run(code + _render_call(driver))
+        best = _best_driven_trace(code, "shuffled") or best
+        driver, driven = best
     driven["driver"] = driver.to_dict()
     return driven
+
+
+def _best_driven_trace(code: str, variant: str) -> tuple[DriverPlan, dict[str, Any]] | None:
+    """Trace each candidate input and keep the one covering the most lines."""
+    best = None
+    for driver in _plan_drivers(code, variant):
+        driven = _run(code + _render_call(driver))
+        score = (not driven["error"], _lines_covered(driven))
+        if best is None or score > best[0]:
+            best = (score, driver, driven)
+    return (best[1], best[2]) if best else None
+
+
+def _lines_covered(trace: dict[str, Any]) -> int:
+    return len({s["line"] for s in trace["steps"] if s["func"] != "<module>"})
 
 
 def _run(code: str) -> dict[str, Any]:
@@ -43,12 +58,12 @@ def _has_user_calls(trace: dict[str, Any]) -> bool:
     return any(step["event"] == "call" for step in trace["steps"])
 
 
-def _plan_driver(code: str, variant: str) -> DriverPlan | None:
-    """Pick the snippet's entry function and example arguments for it."""
+def _plan_drivers(code: str, variant: str) -> list[DriverPlan]:
+    """The snippet's entry function with candidate example arguments."""
     try:
         tree = ast.parse(code)
     except SyntaxError:
-        return None
+        return []
 
     candidates: list[tuple[str | None, ast.FunctionDef]] = []
     for node in tree.body:
@@ -73,10 +88,13 @@ def _plan_driver(code: str, variant: str) -> DriverPlan | None:
             for a in fn.args.args
             if a.arg not in {"self", "cls"}
         ]
-        args = synthesize_args(params, variant)
-        if args is not None:
-            return DriverPlan(function=fn.name, owner_class=owner, args=args, variant=variant)
-    return None
+        arg_sets = candidate_args(params, variant)
+        if arg_sets:
+            return [
+                DriverPlan(function=fn.name, owner_class=owner, args=args, variant=variant)
+                for args in arg_sets
+            ]
+    return []
 
 
 def _render_call(driver: DriverPlan) -> str:

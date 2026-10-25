@@ -62,7 +62,7 @@ def _run_manim(scene_file: Path, scene_id: str) -> Path:
         text=True,
         encoding="utf-8",
         errors="replace",
-        timeout=600,
+        timeout=1800,
         cwd=str(SCENES_DIR),
     )
 

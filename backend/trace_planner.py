@@ -19,7 +19,8 @@ from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any
 
-MAX_EVENTS = 160
+# Safety valve only: the renderer speeds up long plans instead of cutting them.
+MAX_EVENTS = 1500
 INFINITY_THRESHOLD = 2**31 - 1
 SCALAR_TYPES = (int, float, str, bool, type(None))
 
@@ -660,18 +661,35 @@ def _build_stack(ctx: TraceContext, view: View, out: SceneBuilder) -> None:
 def _build_hashmap(ctx: TraceContext, view: View, out: SceneBuilder) -> None:
     shown_inputs: set[str] = set()
     previous: dict | None = None
+    last_read: tuple | None = None
+    previous_vars: dict | None = None
     for step in ctx.steps:
         for input_ref in view.extra.get("inputs", []):
             items = _items_at(step, input_ref)
-            if items is not None and input_ref not in shown_inputs:
+            if items is None:
+                continue
+            input_name = ctx.name_of(input_ref, step)
+            if input_ref not in shown_inputs:
                 shown_inputs.add(input_ref)
                 display = [_display(v) for v in items]
                 out.add(
                     "create_array",
                     values=display,
                     layout={"anchor": "bottom"},
-                    caption=f"Input {ctx.name_of(input_ref, step)} = {_fmt_list(display)}",
+                    caption=f"Input {input_name} = {_fmt_list(display)}",
                 )
+            last_read = _emit_reads(ctx, step, input_ref, input_name, items, out, last_read)
+
+        owner = _frame_holding(step, view.ref)
+        if owner is not None:
+            scalars = {
+                k: _display(v)
+                for k, v in owner["locals"].items()
+                if isinstance(v, SCALAR_TYPES)
+            }
+            if scalars and scalars != previous_vars:
+                out.add("show_variables", variables=scalars)
+                previous_vars = scalars
 
         entries = _entries_at(step, view.ref)
         if entries is None:
@@ -1107,6 +1125,13 @@ def _entries_at(step: Step, ref: str) -> dict | None:
         _display(_scalar(k, step["heap"])): _display(_scalar(v, step["heap"]) if _ref(v) is None else _short_obj(v, step["heap"]))
         for k, v in obj.get("entries") or []
     }
+
+
+def _frame_holding(step: Step, ref: str) -> dict[str, Any] | None:
+    for frame in reversed(step["stack"]):
+        if any(_ref(v) == ref for v in frame["locals"].values()):
+            return frame
+    return None
 
 
 def _aliases(step: Step, ref: str) -> set[str]:

@@ -8,7 +8,7 @@ other domain (arrays, sorts, recursion, hash maps, classifier leftovers).
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Callable
 
 from ai import generate_animation_plan
 from analyzer import analyze
@@ -22,13 +22,19 @@ from visualization.tree import plan_tree
 from visualization.validator import validate_document
 
 
-def build_visualization_plan(code: str, language: str) -> dict[str, Any]:
+def build_visualization_plan(
+    code: str, language: str, report: Callable[[str], None] | None = None
+) -> dict[str, Any]:
     """Analyze and plan. Returns the final plan in the renderer's scene shape.
 
     Executing the snippet and animating its real trace is the primary path;
     the pattern-based planners below only run when no trace is available.
+    `report` receives the stage name ("tracing", "planning") as work starts.
     """
+    report = report or (lambda _stage: None)
+    report("tracing")
     trace = trace_code(code, language)
+    report("planning")
     if trace is not None:
         plan = plan_from_trace(trace, code)
         if plan is not None:

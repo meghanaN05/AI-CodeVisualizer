@@ -75,6 +75,37 @@ def synthesize_args(params: list[Param], variant: str = "sorted") -> list[tuple[
 _UNKNOWN = object()
 
 
+def candidate_args(params: list[Param], variant: str = "sorted", limit: int = 6) -> list[list[tuple[str, Any]]]:
+    """Several plausible argument sets, so the tracer can keep the one that
+    exercises the most of the code (e.g. a k for which a match exists)."""
+    base = synthesize_args(params, variant)
+    if base is None:
+        return []
+    candidates = [base]
+    array = next(
+        (v for _n, v in base if isinstance(v, list) and len(v) >= 5 and all(isinstance(x, int) for x in v)),
+        None,
+    )
+    if array is not None:
+        picks = [array[1], array[len(array) // 2], array[1] + array[2], array[2] + array[3] + array[4]]
+        for position, (name, value) in enumerate(base):
+            tunable = _SEARCH_NAMES.match(name) or name.lower() == "k" or not (
+                _SIZE_NAMES.match(name) or _INDEX_NAMES.match(name) or _END_INDEX_NAMES.match(name)
+            )
+            if not tunable or not isinstance(value, int) or isinstance(value, bool):
+                continue
+            for pick in picks:
+                if pick != value:
+                    variant_args = list(base)
+                    variant_args[position] = (name, pick)
+                    candidates.append(variant_args)
+    unique: list[list[tuple[str, Any]]] = []
+    for args in candidates:
+        if args not in unique:
+            unique.append(args)
+    return unique[:limit]
+
+
 def _guess(param: Param, array: list[int], has_array: bool) -> Any:
     name = param.name
     hint = param.type_hint.lower().replace(" ", "")
