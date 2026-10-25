@@ -12,6 +12,8 @@ from typing import Any
 
 from ai import generate_animation_plan
 from analyzer import analyze
+from trace_planner import plan_from_trace
+from tracing import trace_code
 from visualization.graph import plan_graph
 from visualization.layout import apply_layout
 from visualization.schema import DslStep, VisualizationDocument
@@ -21,7 +23,17 @@ from visualization.validator import validate_document
 
 
 def build_visualization_plan(code: str, language: str) -> dict[str, Any]:
-    """Analyze and plan. Returns the final plan in the renderer's scene shape."""
+    """Analyze and plan. Returns the final plan in the renderer's scene shape.
+
+    Executing the snippet and animating its real trace is the primary path;
+    the pattern-based planners below only run when no trace is available.
+    """
+    trace = trace_code(code, language)
+    if trace is not None:
+        plan = plan_from_trace(trace, code)
+        if plan is not None:
+            return plan
+
     ir = analyze(code, language)
     domain = ir.get("classification", {}).get("domain", "generic")
 

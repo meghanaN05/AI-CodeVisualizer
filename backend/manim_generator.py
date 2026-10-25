@@ -39,13 +39,19 @@ class CodeVisualization(Scene):
         self.arch_components = {{}}
         self.arch_connections = {{}}
         self._arch_objects = []
+        self.grid_cells = {{}}
+        self.grid_group = None
+        self.grid_highlight = None
+        self.ll_group = None
+        self.hashmap_rows = {{}}
+        self.current_graph_node = None
 
         for step in self.SCENES:
             action = step.get("action")
             if action == "show_title":
                 self._show_title(step.get("text", {title!r}))
             elif action == "create_array":
-                self._create_array(step.get("values", []))
+                self._create_array(step.get("values", []), (step.get("layout") or {{}}).get("anchor"), step.get("caption"))
             elif action == "highlight_index":
                 self._highlight_index(step.get("index", 0), step.get("label", ""), step.get("caption"))
             elif action == "highlight_range":
@@ -83,7 +89,7 @@ class CodeVisualization(Scene):
             elif action == "show_hashmap":
                 self._show_hashmap(step.get("text", "map"), step.get("values", []), step.get("caption"))
             elif action == "hashmap_insert":
-                self._hashmap_insert(step.get("text", "map"), step.get("label", ""), step.get("caption"))
+                self._hashmap_insert(step.get("text", "map"), step.get("label", ""), step.get("caption"), step.get("values"))
             elif action == "show_heap":
                 self._show_heap(step.get("values", []), step.get("caption"))
             elif action == "heap_push":
@@ -111,6 +117,16 @@ class CodeVisualization(Scene):
                 )
             elif action == "show_flow":
                 self._show_flow(step.get("from"), step.get("to"), step.get("caption"))
+            elif action == "set_index":
+                self._set_index(step.get("index", 0), step.get("values", []), step.get("caption"))
+            elif action == "show_grid":
+                self._show_grid(step.get("values", []), step.get("caption"))
+            elif action == "set_cell":
+                self._set_cell(step.get("row", 0), step.get("col", 0), step.get("values", []), step.get("caption"))
+            elif action == "highlight_cell":
+                self._highlight_cell(step.get("row", 0), step.get("col", 0), step.get("caption"))
+            elif action == "show_linked_list":
+                self._show_linked_list(step.get("nodes", []), step.get("edges", []), step.get("variables", {{}}), step.get("caption"))
             elif action == "highlight_component":
                 self._highlight_component(step.get("component"), step.get("caption"))
 
@@ -135,7 +151,9 @@ class CodeVisualization(Scene):
             self.play(FadeIn(self.caption))
         self.wait(0.8)
 
-    def _create_array(self, values):
+    def _create_array(self, values, anchor=None, caption=None):
+        if caption:
+            self._show_caption(caption)
         if getattr(self, "array_boxes", None) and any(b in self.mobjects for b in self.array_boxes):
             self.play(FadeOut(*self.array_boxes), FadeOut(*self.array_labels))
             self.remove(*self.array_boxes, *self.array_labels)
@@ -156,6 +174,10 @@ class CodeVisualization(Scene):
             self.array_labels.append(label)
             group.add(item)
 
+        if group.width > 12.5:
+            group.scale_to_fit_width(12.5)
+        if anchor == "bottom":
+            group.shift(DOWN * 2.2)
         self.array_group = group
         self.play(LaggedStart(*[Create(box) for box in self.array_boxes], lag_ratio=0.15))
         self.play(LaggedStart(*[Write(label) for label in self.array_labels], lag_ratio=0.1))
@@ -174,8 +196,7 @@ class CodeVisualization(Scene):
             opacity = 0.45 if i == index else 0.15
             animations.append(box.animate.set_color(color).set_fill(color, opacity=opacity))
 
-        if self.pointer:
-            self.remove(self.pointer)
+        self._clear_pointer()
         target = self.array_boxes[index].get_bottom() + DOWN * 0.2
         self.pointer = Arrow(start=target + DOWN * 0.8, end=target, color=YELLOW, buff=0.05)
         pointer_label = Text(str(label or f"i = {{index}}"), font_size=24, color=YELLOW)
@@ -185,9 +206,17 @@ class CodeVisualization(Scene):
         self.play(*animations, GrowArrow(self.pointer[0]), FadeIn(self.pointer[1]))
         self.wait(0.7)
 
+    def _clear_pointer(self):
+        # The arrow and its label were added to the scene individually, so
+        # removing only their VGroup would leave both on screen.
+        if self.pointer:
+            self.remove(*self.pointer.submobjects, self.pointer)
+            self.pointer = None
+
     def _compare_indices(self, index, other, caption):
         if not self.array_boxes:
             return
+        self._clear_pointer()
         i = max(0, min(int(index), len(self.array_boxes) - 1))
         j = max(0, min(int(other), len(self.array_boxes) - 1))
         if caption:
@@ -202,11 +231,43 @@ class CodeVisualization(Scene):
         self.wait(0.6)
 
     def _swap_indices(self, index, other, values, caption):
-        if values:
-            self._create_array(values)
         if caption:
             self._show_caption(caption)
-        self.wait(0.5)
+        count = len(self.array_boxes)
+        i, j = int(index), int(other)
+        if not values or len(values) != count or not (0 <= i < count and 0 <= j < count) or i == j:
+            if values:
+                self._create_array(values)
+            return
+        li, lj = self.array_labels[i], self.array_labels[j]
+        self.play(
+            li.animate(path_arc=PI / 2).move_to(self.array_boxes[j].get_center()),
+            lj.animate(path_arc=PI / 2).move_to(self.array_boxes[i].get_center()),
+            self.array_boxes[i].animate.set_color(GREEN).set_fill(GREEN, opacity=0.35),
+            self.array_boxes[j].animate.set_color(GREEN).set_fill(GREEN, opacity=0.35),
+        )
+        self.array_labels[i], self.array_labels[j] = lj, li
+        self.array_values = [str(v) for v in values]
+        self.play(*[b.animate.set_color(BLUE).set_fill(BLUE, opacity=0.15) for b in (self.array_boxes[i], self.array_boxes[j])])
+
+    def _set_index(self, index, values, caption):
+        if not self.array_boxes or len(values) != len(self.array_boxes):
+            self._create_array(values, caption=caption)
+            return
+        if caption:
+            self._show_caption(caption)
+        i = max(0, min(int(index), len(self.array_boxes) - 1))
+        box = self.array_boxes[i]
+        old = self.array_labels[i]
+        new = Text(str(values[i]), font_size=36, color=WHITE)
+        if self.array_group is not None and self.array_group.width > 0:
+            new.scale(box.width / 1.3)  # follow the array's fit-to-frame scaling
+        new.move_to(box.get_center())
+        if new.width > box.width * 0.9:
+            new.scale_to_fit_width(box.width * 0.9)
+        self.play(Transform(old, new), box.animate.set_color(GREEN).set_fill(GREEN, opacity=0.45))
+        self.array_values = [str(v) for v in values]
+        self.play(box.animate.set_color(BLUE).set_fill(BLUE, opacity=0.15), run_time=0.4)
 
     def _show_tree(self, tree, layout=None):
         self._clear_tree()
@@ -328,6 +389,18 @@ class CodeVisualization(Scene):
 
     def _visit_node(self, node, caption):
         key = str(node)
+        if key in getattr(self, "graph_nodes", {{}}):
+            if caption:
+                self._show_caption(caption)
+            anims = []
+            previous = self.current_graph_node
+            if previous is not None and previous in self.graph_nodes and previous != key:
+                anims.append(self.graph_nodes[previous][0].animate.set_color(GREEN).set_fill(GREEN, opacity=0.35))
+            anims.append(self.graph_nodes[key][0].animate.set_color(YELLOW).set_fill(YELLOW, opacity=0.5))
+            self.current_graph_node = key
+            self.play(*anims)
+            self.wait(0.4)
+            return
         if key in self.tree_nodes:
             check = Text("✓", font_size=28, color=GREEN).next_to(self.tree_nodes[key], UP, buff=0.15)
             if caption:
@@ -585,7 +658,8 @@ class CodeVisualization(Scene):
         header = Text(f"hash_map: {{name}}", font_size=32, color=TEAL).to_edge(UP, buff=1.0)
         rows = VGroup()
         data = entries or [["key", "value"]]
-        for i, entry in enumerate(data[:5]):
+        self.hashmap_rows = {{}}
+        for i, entry in enumerate(data[:7]):
             key = str(entry[0]) if isinstance(entry, (list, tuple)) and entry else str(entry)
             val = str(entry[1]) if isinstance(entry, (list, tuple)) and len(entry) > 1 else "..."
             box = RoundedRectangle(width=7, height=0.7, corner_radius=0.08, color=TEAL, fill_opacity=0.2)
@@ -593,6 +667,7 @@ class CodeVisualization(Scene):
             text.move_to(box.get_center())
             row = VGroup(box, text).shift(DOWN * i * 0.85)
             rows.add(row)
+            self.hashmap_rows[key] = row
         rows.next_to(header, DOWN, buff=0.3)
         self.hashmap_group = VGroup(header, rows)
         self.play(FadeIn(header), LaggedStart(*[FadeIn(r, shift=RIGHT * 0.15) for r in rows], lag_ratio=0.1))
@@ -606,9 +681,29 @@ class CodeVisualization(Scene):
             self.remove(*targets)
         self._hashmap_objects = []
 
-    def _hashmap_insert(self, name, label, caption):
+    def _hashmap_insert(self, name, label, caption, values=None):
         if caption:
             self._show_caption(caption)
+        if values and self.hashmap_group is not None:
+            key, val = str(values[0][0]), str(values[0][1])
+            text = Text(f"  {{key}}  →  {{val}}", font_size=22, color=WHITE, font="Consolas")
+            row = self.hashmap_rows.get(key)
+            if row is not None:
+                text.move_to(row[0].get_center())
+                self.play(Transform(row[1], text), row[0].animate.set_color(GREEN))
+                self.play(row[0].animate.set_color(TEAL), run_time=0.4)
+                return
+            if len(self.hashmap_rows) < 7:
+                box = RoundedRectangle(width=7, height=0.7, corner_radius=0.08, color=GREEN, fill_opacity=0.25)
+                rows = self.hashmap_group[1]
+                anchor = rows[-1] if len(rows) else self.hashmap_group[0]
+                new_row = VGroup(box, text.move_to(box.get_center())).next_to(anchor, DOWN, buff=0.15)
+                rows.add(new_row)
+                self.hashmap_rows[key] = new_row
+                self._hashmap_objects.append(new_row)
+                self.play(FadeIn(new_row, shift=DOWN * 0.15))
+                self.play(box.animate.set_color(TEAL), run_time=0.4)
+                return
         box = RoundedRectangle(width=7, height=0.7, corner_radius=0.08, color=GREEN, fill_opacity=0.35)
         text = Text(f"  + {{label}}", font_size=22, color=WHITE, font="Consolas")
         text.move_to(box.get_center())
@@ -821,6 +916,107 @@ class CodeVisualization(Scene):
                 self.play(FadeOut(arrow), info.animate.set_color(GRAY_B).set_stroke(width=3))
             else:
                 self._show_caption(f"flow {{source}} → {{target}}")
+        self.wait(0.4)
+
+    def _show_grid(self, values, caption):
+        if caption:
+            self._show_caption(caption)
+        if self.grid_group is not None:
+            self.play(FadeOut(self.grid_group))
+        rows = len(values)
+        cols = max((len(r) for r in values), default=0)
+        if not rows or not cols:
+            return
+        cell = min(1.0, 5.2 / rows, 11.0 / cols)
+        self.grid_cells = {{}}
+        self.grid_highlight = None
+        group = VGroup()
+        for r, row in enumerate(values):
+            for c, value in enumerate(row):
+                box = Square(side_length=cell * 0.94, color=BLUE, fill_opacity=0.15)
+                label = Text(str(value), font_size=max(14, int(30 * cell)), color=WHITE)
+                if label.width > box.width * 0.85:
+                    label.scale_to_fit_width(box.width * 0.85)
+                item = VGroup(box, label.move_to(box.get_center()))
+                item.move_to(RIGHT * (c - (cols - 1) / 2) * cell + UP * ((rows - 1) / 2 - r) * cell)
+                self.grid_cells[(r, c)] = item
+                group.add(item)
+        group.shift(UP * 0.4)
+        self.grid_group = group
+        self.play(FadeIn(group, lag_ratio=0.02))
+        self.wait(0.4)
+
+    def _set_cell(self, row, col, values, caption):
+        if caption:
+            self._show_caption(caption)
+        item = self.grid_cells.get((int(row), int(col)))
+        if item is None:
+            self._show_grid(values, None)
+            return
+        box, old = item[0], item[1]
+        new = Text(str(values[int(row)][int(col)]), font_size=max(14, int(30 * box.width / 0.94)), color=WHITE)
+        if new.width > box.width * 0.85:
+            new.scale_to_fit_width(box.width * 0.85)
+        new.move_to(box.get_center())
+        self.play(Transform(old, new), box.animate.set_color(GREEN).set_fill(GREEN, opacity=0.45))
+        self.play(box.animate.set_color(TEAL).set_fill(TEAL, opacity=0.3), run_time=0.3)
+
+    def _highlight_cell(self, row, col, caption):
+        if caption:
+            self._show_caption(caption)
+        item = self.grid_cells.get((int(row), int(col)))
+        if item is None:
+            return
+        anims = []
+        if self.grid_highlight is not None and self.grid_highlight is not item:
+            anims.append(self.grid_highlight[0].animate.set_stroke(BLUE, width=4))
+        anims.append(item[0].animate.set_stroke(YELLOW, width=8))
+        self.grid_highlight = item
+        self.play(*anims, run_time=0.5)
+
+    def _show_linked_list(self, nodes, edges, pointers, caption):
+        if caption:
+            self._show_caption(caption)
+        count = len(nodes)
+        if not count:
+            return
+        spacing = min(2.2, 12.0 / max(count, 1))
+        boxes = []
+        group = VGroup()
+        for i, value in enumerate(nodes):
+            box = RoundedRectangle(width=1.1, height=0.8, corner_radius=0.1, color=BLUE, fill_opacity=0.2)
+            label = Text(str(value), font_size=30, color=WHITE).move_to(box.get_center())
+            node = VGroup(box, label).move_to(RIGHT * (i - (count - 1) / 2) * spacing + UP * 0.6)
+            boxes.append(node)
+            group.add(node)
+        for edge in edges:
+            a, b = int(edge["from"]), int(edge["to"])
+            if not (0 <= a < count and 0 <= b < count) or a == b:
+                continue
+            if b == a + 1:
+                arrow = Arrow(boxes[a].get_right(), boxes[b].get_left(), buff=0.05, color=GRAY_B, stroke_width=3)
+            else:
+                start, end = boxes[a].get_top(), boxes[b].get_top()
+                arrow = CurvedArrow(start, end, angle=-PI / 2.5 if b > a else PI / 2.5, color=ORANGE)
+            group.add(arrow)
+        below = {{}}
+        null_names = []
+        for name, index in (pointers or {{}}).items():
+            if index is None or not (0 <= int(index) < count):
+                null_names.append(name)
+                continue
+            depth = below.get(int(index), 0)
+            below[int(index)] = depth + 1
+            tag = Text(str(name), font_size=24, color=YELLOW)
+            tag.next_to(boxes[int(index)], DOWN, buff=0.35 + depth * 0.4)
+            group.add(tag)
+        if null_names:
+            group.add(Text(", ".join(null_names) + " = null", font_size=24, color=GRAY_B).to_edge(LEFT, buff=0.6).shift(DOWN * 1.6))
+        if self.ll_group is not None:
+            self.play(ReplacementTransform(self.ll_group, group), run_time=0.8)
+        else:
+            self.play(FadeIn(group))
+        self.ll_group = group
         self.wait(0.4)
 
     def _highlight_component(self, component, caption):

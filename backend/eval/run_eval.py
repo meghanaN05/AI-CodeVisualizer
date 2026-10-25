@@ -47,7 +47,7 @@ VISUAL_ACTIONS: dict[str, set[str]] = {
     "linked_list": {"show_linked_list"},
 }
 
-ARRAY_STATE_ACTIONS = {"create_array", "swap_indices"}
+ARRAY_STATE_ACTIONS = {"create_array", "swap_indices", "set_index"}
 
 # Fields whose values are prose or geometry rather than the program's data;
 # a number in a caption or a coordinate must not count as "real data shown".
