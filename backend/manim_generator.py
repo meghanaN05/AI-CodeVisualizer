@@ -8,6 +8,7 @@ from typing import Any
 
 def generate_manim_code(animation_plan: dict[str, Any]) -> str:
     scenes_json = json.dumps(animation_plan.get("scenes", []))
+    source_json = json.dumps((animation_plan.get("source") or "").splitlines())
     title = animation_plan.get("title", "Code Visualization")
 
     return f"""from manim import *
@@ -15,8 +16,9 @@ import json
 import math
 
 
-class CodeVisualization(Scene):
+class CodeVisualization(MovingCameraScene):
     SCENES = json.loads({scenes_json!r})
+    SOURCE = json.loads({source_json!r})
 
     def play(self, *args, **kwargs):
         kwargs["run_time"] = kwargs.get("run_time", 1.0) * self.speed
@@ -27,7 +29,8 @@ class CodeVisualization(Scene):
 
     def construct(self):
         # Plans with many steps play faster rather than being truncated.
-        self.speed = max(0.3, min(1.0, 60 / max(len(self.SCENES), 1)))
+        # Every executed line is shown; long runs play faster, never cut.
+        self.speed = max(0.08, min(1.0, 80 / max(len(self.SCENES), 1)))
         self.camera.background_color = "#1a1a2e"
         self.array_boxes = []
         self.array_labels = []
@@ -59,8 +62,17 @@ class CodeVisualization(Scene):
         self.pointer_order = []
         self.current_graph_node = None
 
+        self.code_rows = []
+        if self.SOURCE:
+            self._setup_code_panel()
+
         for step in self.SCENES:
             action = step.get("action")
+            if step.get("line") and self.code_rows:
+                self._goto_line(int(step["line"]))
+            if action == "code_line":
+                self._show_caption(step.get("caption"))
+                continue
             if action == "show_title":
                 self._show_title(step.get("text", {title!r}))
             elif action == "create_array":
@@ -152,6 +164,51 @@ class CodeVisualization(Scene):
                 self._highlight_component(step.get("component"), step.get("caption"))
 
         self.wait(1)
+
+    def _setup_code_panel(self):
+        # Zoom out so the original 14 x 8 area (where every view draws) sits on
+        # the right, and the code gets the new space on the left.
+        self.camera.frame.scale(1.6).move_to(LEFT * 4.28)
+        panel_center = LEFT * 11.4
+        background = RoundedRectangle(width=8.2, height=12.4, corner_radius=0.2, color=GRAY_D, fill_color="#11111f", fill_opacity=1)
+        background.move_to(panel_center)
+        self.code_line_height = 0.42
+        rows = VGroup()
+        for number, text in enumerate(self.SOURCE, start=1):
+            code = text.replace("\t", "    ").rstrip().replace(" ", "\u00a0")
+            row = Text(f"{{number:>3}}\u00a0\u00a0{{code}}", font="Monospace", font_size=22, color=GRAY_B)
+            row.move_to(ORIGIN, aligned_edge=LEFT).shift(DOWN * (number - 1) * self.code_line_height)
+            rows.add(row)
+        widest = max((r.width for r in rows), default=1)
+        if widest > 7.6:
+            rows.scale(7.6 / widest, about_point=ORIGIN)
+            self.code_line_height *= 7.6 / widest
+        rows.shift(panel_center + LEFT * 3.8 + UP * 5.7 - rows[0].get_left() * RIGHT - rows[0].get_center() * UP)
+        self.code_group = rows
+        self.code_rows = list(rows)
+        self.code_marker = Rectangle(width=8.0, height=self.code_line_height * 1.05, stroke_width=0, fill_color=YELLOW, fill_opacity=0.18)
+        self.code_marker.move_to(panel_center * RIGHT + rows[0].get_center() * UP)
+        self.code_current = None
+        self.add(background, self.code_marker, rows)
+
+    def _goto_line(self, line):
+        if not (1 <= line <= len(self.code_rows)) or line == self.code_current:
+            return
+        row = self.code_rows[line - 1]
+        anims = []
+        # Scroll long code so the current line stays in view.
+        if row.get_center()[1] < -5.6 or row.get_center()[1] > 5.9:
+            offset = UP * (3.0 - row.get_center()[1])
+            anims.append(self.code_group.animate.shift(offset))
+            target_y = 3.0
+        else:
+            target_y = row.get_center()[1]
+        anims.append(self.code_marker.animate.move_to(self.code_marker.get_center() * RIGHT + target_y * UP))
+        if self.code_current is not None:
+            anims.append(self.code_rows[self.code_current - 1].animate.set_color(GRAY_B))
+        anims.append(row.animate.set_color(YELLOW))
+        self.code_current = line
+        self.play(*anims, run_time=0.3)
 
     def _show_title(self, text):
         title = Text(text, font_size=48, color=YELLOW)
@@ -729,7 +786,7 @@ class CodeVisualization(Scene):
 
     def _show_variable_row(self, variables):
         items = [f"{{name}} = {{value}}" for name, value in variables.items()]
-        rows = [items[i:i + 4] for i in range(0, len(items), 4)][:2]
+        rows = [items[i:i + 4] for i in range(0, len(items), 4)][:3]
         text = Text("\\n".join("     ".join(row) for row in rows), font_size=24, color=WHITE, line_spacing=1.2)
         if text.width > 12:
             text.scale_to_fit_width(12)

@@ -20,7 +20,11 @@ from typing import Any
 CPU_SECONDS = 10
 WALL_SECONDS = 20
 MAX_FILE_BYTES = 50 * 1024 * 1024
-MAX_OUTPUT_CHARS = 20 * 1024 * 1024
+MAX_OUTPUT_CHARS = 400 * 1024 * 1024
+
+# Every tracer stops after this many steps. It exists only so an infinite
+# loop terminates; the video says when a run was cut off here.
+MAX_TRACE_STEPS = 5000
 
 
 @dataclass

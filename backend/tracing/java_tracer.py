@@ -32,10 +32,10 @@ from typing import Any
 
 from tracing.driver import DriverPlan, Param, synthesize_args
 from tracing.python_tracer import _mutates_array_arg
-from tracing.sandbox import parse_trace_output, run_sandboxed
+from tracing.sandbox import MAX_TRACE_STEPS, parse_trace_output, run_sandboxed
 
 JAVA_DIR = Path(__file__).resolve().parent / "java"
-MAX_STEPS = 1500
+MAX_STEPS = MAX_TRACE_STEPS
 DEBUG_DEADLINE_MS = 15000  # tracer-side limit for the traced program
 SANDBOX_TIMEOUT = 25.0  # JVM start + compile + DEBUG_DEADLINE_MS, bounded
 DRIVER_CLASS = "__TraceDriver"

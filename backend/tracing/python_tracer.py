@@ -10,10 +10,10 @@ from pathlib import Path
 from typing import Any
 
 from tracing.driver import DriverPlan, Param, candidate_args
-from tracing.sandbox import parse_trace_output, run_sandboxed
+from tracing.sandbox import MAX_TRACE_STEPS, parse_trace_output, run_sandboxed
 
 RUNNER = Path(__file__).resolve().parent / "python_runner.py"
-MAX_STEPS = 1500
+MAX_STEPS = MAX_TRACE_STEPS
 
 
 def trace_python(code: str) -> dict[str, Any]:

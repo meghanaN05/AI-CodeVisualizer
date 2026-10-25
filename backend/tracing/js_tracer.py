@@ -40,10 +40,10 @@ from tree_sitter import Language, Node, Parser
 
 from tracing.driver import DriverPlan, Param, synthesize_args
 from tracing.python_tracer import _has_user_calls, _mutates_array_arg
-from tracing.sandbox import SandboxResult, parse_trace_output, run_sandboxed
+from tracing.sandbox import MAX_TRACE_STEPS, SandboxResult, parse_trace_output, run_sandboxed
 
 RUNTIME = Path(__file__).resolve().parent / "js" / "runtime.js"
-MAX_STEPS = 1500
+MAX_STEPS = MAX_TRACE_STEPS
 NODE_FLAGS = ["--max-old-space-size=512", "--stack-size=2000"]
 
 _PARSER = Parser(Language(tree_sitter_javascript.language()))

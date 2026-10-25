@@ -26,11 +26,11 @@ from typing import Any
 from tracing.cpp.instrument import FunctionInfo, Instrumented, ParamInfo, instrument
 from tracing.driver import DriverPlan, Param, candidate_args
 from tracing.python_tracer import _mutates_array_arg
-from tracing.sandbox import WALL_SECONDS, run_sandboxed
+from tracing.sandbox import MAX_TRACE_STEPS, WALL_SECONDS, run_sandboxed
 
 INCLUDE_DIR = Path(__file__).resolve().parent / "cpp" / "include"
 SUPPORT_SOURCE = Path(__file__).resolve().parent / "cpp" / "cvt_support.cpp"
-MAX_STEPS = 1500
+MAX_STEPS = MAX_TRACE_STEPS
 COMPILE_SECONDS = 60
 CXX = os.environ.get("CVT_CXX") or shutil.which("g++") or shutil.which("clang++") or "g++"
 CXX_FLAGS = ["-std=c++17", "-O0", "-w", "-fdiagnostics-color=never", f"-DCVT_MAX_STEPS={MAX_STEPS}"]

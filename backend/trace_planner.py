@@ -19,8 +19,13 @@ from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any
 
-# Safety valve only: the renderer speeds up long plans instead of cutting them.
-MAX_EVENTS = 1500
+# Scenes that show the RESULT of the previous line (the state changed), as
+# opposed to the line about to run (a read, a visit, a call).
+STATE_ACTIONS = {
+    "create_array", "swap_indices", "set_index", "set_cell", "show_grid",
+    "push_stack", "pop_stack", "show_hashmap", "hashmap_insert", "update_distance",
+    "show_linked_list", "show_variables", "show_collection",
+}
 INFINITY_THRESHOLD = 2**31 - 1
 SCALAR_TYPES = (int, float, str, bool, type(None))
 
@@ -38,7 +43,7 @@ def plan_from_trace(trace: dict[str, Any], code: str) -> dict[str, Any] | None:
 
     ctx = TraceContext(steps=steps, lines=code.splitlines(), language=trace.get("language", ""))
     view = _choose_view(ctx)
-    builder = SceneBuilder()
+    builder = SceneBuilder(ctx)
 
     builder.add("show_title", text=_title(ctx, view))
     driver = trace.get("driver")
@@ -46,6 +51,7 @@ def plan_from_trace(trace: dict[str, Any], code: str) -> dict[str, Any] | None:
         builder.add("show_caption", text=driver["description"])
 
     VIEW_BUILDERS[view.kind](ctx, view, builder)
+    builder.cover_every_line()
     result = _entry_result(ctx)
     if result:
         builder.add("show_caption", text=result)
@@ -60,6 +66,8 @@ def plan_from_trace(trace: dict[str, Any], code: str) -> dict[str, Any] | None:
         return None
     return {
         "algorithm": None,
+        "source": code,
+        "language": ctx.language,
         "title": _title(ctx, view),
         "data_structure": view.kind,
         "description": f"Execution trace of your code shown as a {view.kind.replace('_', ' ')}",
@@ -129,23 +137,64 @@ class View:
 
 
 class SceneBuilder:
-    def __init__(self) -> None:
-        self.scenes: list[dict[str, Any]] = []
-        self.dropped = 0
+    """Collects scenes; each scene remembers which trace step and source line
+    produced it, so the video can highlight the code line by line."""
 
-    def add(self, action: str, **fields: Any) -> None:
-        if len(self.scenes) >= MAX_EVENTS:
-            self.dropped += 1
-            return
-        scene = {"action": action}
+    def __init__(self, ctx: TraceContext) -> None:
+        self.ctx = ctx
+        self.scenes: list[dict[str, Any]] = []
+        self.index: int | None = None
+
+    def walk(self, ctx: TraceContext):
+        """Iterate trace steps, tagging scenes added meanwhile with the step."""
+        for index, step in enumerate(ctx.steps):
+            self.index = index
+            yield index, step
+        self.index = None
+
+    def add(self, action: str, _line: int | None = None, **fields: Any) -> None:
+        scene: dict[str, Any] = {"action": action}
         scene.update({k: v for k, v in fields.items() if v is not None})
+        if self.index is not None:
+            scene["_step"] = self.index
+            cause = self.index - 1 if action in STATE_ACTIONS and self.index > 0 else self.index
+            scene["line"] = self.ctx.steps[cause]["line"]
+        if _line is not None:
+            scene["line"] = _line
         self.scenes.append(scene)
 
+    def cover_every_line(self) -> None:
+        """Add a code-line scene for every executed step that produced no
+        visual event, so the video walks through ALL of the code that ran."""
+        steps = self.ctx.steps
+        merged: list[dict[str, Any]] = []
+        next_step = 0
+
+        def fill(until: int) -> None:
+            nonlocal next_step
+            for i in range(next_step, until):
+                line = steps[i]["line"]
+                if not 1 <= line <= len(self.ctx.lines):
+                    continue  # the call we appended for an example input
+                previous = merged[-1] if merged else None
+                if previous and previous.get("line") == line and previous["action"] == "code_line":
+                    continue
+                code = _strip_comment(self.ctx.source(line)).strip()
+                merged.append({"action": "code_line", "line": line, "caption": f"Line {line}: {code[:60]}"})
+            next_step = max(next_step, until)
+
+        for scene in self.scenes:
+            step = scene.pop("_step", None)
+            if step is not None:
+                fill(step)
+                next_step = max(next_step, step + 1)
+            merged.append(scene)
+        fill(len(steps))
+        self.scenes = merged
+
     def finish(self) -> list[dict[str, Any]]:
-        if self.dropped:
-            self.scenes.append(
-                {"action": "show_caption", "text": f"… {self.dropped} more steps not shown"}
-            )
+        for scene in self.scenes:
+            scene.pop("_step", None)
         return self.scenes
 
 
@@ -431,7 +480,7 @@ def _build_array(ctx: TraceContext, view: View, out: SceneBuilder) -> None:
     last_scalars: dict | None = None
     shown_collections: dict[str, list] = {}
 
-    for index, step in enumerate(ctx.steps):
+    for index, step in out.walk(ctx):
         items = _items_at(step, ref)
         if items is None:
             continue
@@ -743,7 +792,7 @@ def _eval_node(node: ast.AST, env: dict[str, Any]) -> Any:
 def _build_grid(ctx: TraceContext, view: View, out: SceneBuilder) -> None:
     previous: list[list] | None = None
     last_read: tuple | None = None
-    for step in ctx.steps:
+    for index, step in out.walk(ctx):
         rows = _grid_at(step, view.ref)
         if rows is None:
             continue
@@ -781,7 +830,7 @@ def _build_grid(ctx: TraceContext, view: View, out: SceneBuilder) -> None:
 def _build_stack(ctx: TraceContext, view: View, out: SceneBuilder) -> None:
     previous: list | None = None
     top_first = view.extra.get("end") == "front"
-    for step in ctx.steps:
+    for index, step in out.walk(ctx):
         items = _items_at(step, view.ref)
         if items is None:
             continue
@@ -809,7 +858,7 @@ def _build_hashmap(ctx: TraceContext, view: View, out: SceneBuilder) -> None:
     previous: dict | None = None
     last_read: tuple | None = None
     previous_vars: dict | None = None
-    for step in ctx.steps:
+    for index, step in out.walk(ctx):
         for input_ref in view.extra.get("inputs", []):
             items = _items_at(step, input_ref)
             if items is None:
@@ -885,7 +934,7 @@ def _build_graph(ctx: TraceContext, view: View, out: SceneBuilder) -> None:
     seen_neighbor: dict[int, Any] = {}
     previous_tables: dict[str, dict] = {}
 
-    for index, step in enumerate(ctx.steps):
+    for index, step in out.walk(ctx):
         if index < view.extra["built_at"]:
             continue
         depth = len(step["stack"])
@@ -1053,7 +1102,7 @@ def _build_tree(ctx: TraceContext, view: View, out: SceneBuilder) -> None:
     seen: dict[tuple[int, str], str] = {}
     printed = ""
     output_lengths: dict[str, int] = {}
-    for index, step in enumerate(ctx.steps):
+    for index, step in out.walk(ctx):
         if index < best_index:
             printed += step.get("stdout", "")
             continue
@@ -1139,7 +1188,7 @@ def _build_linked_list(ctx: TraceContext, view: View, out: SceneBuilder) -> None
 
     position = {ref: i for i, ref in enumerate(order)}
     last_state = None
-    for index, step in enumerate(ctx.steps):
+    for index, step in out.walk(ctx):
         heap = step["heap"]
         if not all(ref in heap for ref in order) or _is_constructor(step["func"]):
             continue
@@ -1173,7 +1222,7 @@ def _build_linked_list(ctx: TraceContext, view: View, out: SceneBuilder) -> None
 
 def _build_call_stack(ctx: TraceContext, view: View, out: SceneBuilder) -> None:
     open_calls: list[str] = []
-    for step in ctx.steps:
+    for index, step in out.walk(ctx):
         func = step["func"]
         if _is_constructor(func) or func == "<module>" or (func == "main" and ctx.language in {"java", "cpp"}):
             continue
@@ -1184,12 +1233,12 @@ def _build_call_stack(ctx: TraceContext, view: View, out: SceneBuilder) -> None:
             )
             label = f"{func}({args})"
             open_calls.append(label)
-            out.add("push_stack", label=label, caption=f"Call {label}")
+            out.add("push_stack", _line=step["line"], label=label, caption=f"Call {label}")
         elif step["event"] == "return" and open_calls:
             label = open_calls.pop()
             result = step.get("return_value")
             value = _display(_scalar(result, step["heap"])) if _ref(result) is None else _short_obj(result, step["heap"])
-            out.add("pop_stack", label=label, caption=f"{label} returns {value}")
+            out.add("pop_stack", _line=step["line"], label=label, caption=f"{label} returns {value}")
 
 
 # ------------------------------------------------------------ variables view
@@ -1197,13 +1246,13 @@ def _build_call_stack(ctx: TraceContext, view: View, out: SceneBuilder) -> None:
 
 def _build_variables(ctx: TraceContext, view: View, out: SceneBuilder) -> None:
     previous: dict[str, Any] | None = None
-    for step in ctx.steps:
+    for index, step in out.walk(ctx):
         frame = step["stack"][-1] if step["stack"] else {"locals": {}}
         scalars = {
             k: _display(v) for k, v in frame["locals"].items() if isinstance(v, SCALAR_TYPES)
         }
         if scalars and scalars != previous:
-            out.add("show_variables", variables=scalars, caption=_after_line(ctx, ctx.steps.index(step)))
+            out.add("show_variables", variables=scalars, caption=_after_line(ctx, index))
             previous = scalars
 
 

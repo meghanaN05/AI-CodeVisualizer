@@ -57,7 +57,7 @@ ARRAY_STATE_ACTIONS = {"create_array", "swap_indices", "set_index"}
 
 # Fields whose values are prose or geometry rather than the program's data;
 # a number in a caption or a coordinate must not count as "real data shown".
-NON_DATA_FIELDS = {"action", "caption", "text", "layout", "index", "directed"}
+NON_DATA_FIELDS = {"action", "caption", "text", "layout", "index", "directed", "line"}
 
 # Demo datasets the planners substitute when extraction fails. Seeing one of
 # these in a plan means the video shows made-up data.
