@@ -19,6 +19,7 @@ from typing import Any
 
 SORTED_ARRAY = [0, 1, 3, 4, 7, 9, 12]
 SHUFFLED_ARRAY = [7, 0, 3, 9, 1, 12, 4]
+PERMUTATION = [4, 0, 6, 2, 5, 1, 3]
 
 _ARRAY_NAMES = re.compile(
     r"^(arr|array|nums?|numbers|a|b|values?|vals|data|lst|list|items|xs|prices|heights)\d*$",
@@ -87,6 +88,10 @@ def candidate_args(params: list[Param], variant: str = "sorted", limit: int = 6)
         None,
     )
     if array is not None:
+        # Many functions use the values as indexes (permutations, jumps,
+        # next pointers); a permutation of 0..n-1 is valid input for them.
+        permutation = list(range(len(array))) if variant == "sorted" else list(PERMUTATION[: len(array)])
+        candidates.append([(n, permutation if v is array else v) for n, v in base])
         picks = [array[1], array[len(array) // 2], array[1] + array[2], array[2] + array[3] + array[4]]
         for position, (name, value) in enumerate(base):
             tunable = _SEARCH_NAMES.match(name) or name.lower() == "k" or not (

@@ -131,6 +131,8 @@ class CodeVisualization(Scene):
                 self._show_flow(step.get("from"), step.get("to"), step.get("caption"))
             elif action == "show_pointers":
                 self._show_pointers(step.get("variables", {{}}))
+            elif action == "compare_value":
+                self._compare_value(step.get("index", 0), step.get("caption"))
             elif action == "highlight_indices":
                 self._highlight_indices(step.get("values", []), step.get("caption"))
             elif action == "set_index":
@@ -261,6 +263,18 @@ class CodeVisualization(Scene):
                 self.remove(self.named_pointers)
             self.named_pointers = group
             self.play(FadeIn(group), run_time=0.4)
+
+    def _compare_value(self, index, caption):
+        if not self.array_boxes:
+            return
+        if caption:
+            self._show_caption(caption)
+        i = max(0, min(int(index), len(self.array_boxes) - 1))
+        self.play(*[
+            box.animate.set_color(ORANGE if j == i else BLUE).set_fill(ORANGE if j == i else BLUE, opacity=0.45 if j == i else 0.15)
+            for j, box in enumerate(self.array_boxes)
+        ])
+        self.wait(0.5)
 
     def _highlight_indices(self, indices, caption):
         if not self.array_boxes:

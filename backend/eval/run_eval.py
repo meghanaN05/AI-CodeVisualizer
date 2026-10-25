@@ -49,7 +49,8 @@ VISUAL_ACTIONS: dict[str, set[str]] = {
 
 # Newer DSL actions that express the same event as the expected one.
 EVENT_EQUIVALENTS: dict[str, set[str]] = {
-    "highlight_index": {"highlight_index", "highlight_indices"},
+    "highlight_index": {"highlight_index", "highlight_indices", "compare_value"},
+    "compare_indices": {"compare_indices", "compare_value"},
 }
 
 ARRAY_STATE_ACTIONS = {"create_array", "swap_indices", "set_index"}

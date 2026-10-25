@@ -7,6 +7,7 @@ the trace (see tracing/__init__.py for the format) as JSON on stdout.
 
 from __future__ import annotations
 
+import builtins
 import io
 import json
 import math
@@ -30,6 +31,33 @@ PYTHON2_BUILTINS = {
     "unichr": chr,
     "reduce": __import__("functools").reduce,
 }
+
+# LeetCode runs solutions with these already imported, so pasted solutions
+# use them without import statements.
+LEETCODE_PRELUDE = """
+from typing import *
+from collections import *
+from heapq import *
+from bisect import *
+from functools import *
+from itertools import *
+from math import *
+import collections, heapq, bisect, functools, itertools, math, re, string, random
+"""
+
+
+def _prelude_namespace() -> dict:
+    namespace: dict = {}
+    exec(LEETCODE_PRELUDE, namespace)
+    namespace.pop("__builtins__", None)
+    # Never shadow a builtin (math.pow would break three-argument pow()).
+    for name in [n for n in namespace if hasattr(builtins, n)]:
+        del namespace[name]
+    namespace.update(PYTHON2_BUILTINS)
+    return namespace
+
+
+PRELUDE = _prelude_namespace()
 
 
 class StepLimitReached(Exception):
@@ -109,6 +137,8 @@ def _instance_fields(value: object) -> dict[str, object]:
 def _is_visible(name: str, value: object) -> bool:
     if name.startswith("__"):
         return False
+    if name in PRELUDE and PRELUDE[name] is value:
+        return False  # provided by us, not a variable the user wrote
     return not isinstance(
         value,
         (types.ModuleType, types.FunctionType, types.BuiltinFunctionType, type),
@@ -183,7 +213,7 @@ def main() -> None:
                     snapshot(frame, event, arg)
         return tracer
 
-    namespace = {"__name__": "__main__", **PYTHON2_BUILTINS}
+    namespace = {"__name__": "__main__", **PRELUDE}
     try:
         compiled = compile(code, FILENAME, "exec")
     except SyntaxError as exc:

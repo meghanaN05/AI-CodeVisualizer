@@ -111,7 +111,10 @@ class TraceContext:
         return Counter(
             s["func"]
             for s in self.steps
-            if s["func"] != "<module>" and not _is_constructor(s["func"]) and not _is_anonymous(s["func"])
+            if s["func"] not in {"<module>", "<static>"}
+            and not _is_constructor(s["func"])
+            and not _is_anonymous(s["func"])
+            and not (s["func"] == "main" and self.language in {"java", "cpp"})
         )
 
 
@@ -168,7 +171,9 @@ def _choose_view(ctx: TraceContext) -> View:
     mutations = {
         ref: _mutation_count(snaps)
         for ref, snaps in objects.items()
-        if _is_scalar_list(snaps) or snaps[-1][1].get("kind") == "dict"
+        # Tuples are value slots (a C++ pair inside a container buffer), not arrays.
+        if (_is_scalar_list(snaps) and snaps[-1][1].get("kind") == "list")
+        or snaps[-1][1].get("kind") == "dict"
     }
     mutated = [ref for ref, count in mutations.items() if count > 0]
     if mutated:
@@ -177,7 +182,7 @@ def _choose_view(ctx: TraceContext) -> View:
         if snaps[-1][1].get("kind") == "dict":
             return View("hashmap", best, {"inputs": _input_arrays(ctx, objects, best)})
         if _behaves_like_stack(snaps):
-            return View("stack", best)
+            return View("stack", best, {"end": _stack_end(snaps)})
         if _is_recursive(ctx) and not _shared_across_recursion(ctx, best):
             # Each call builds its own lists (e.g. merge sort): the story is
             # the calls and what they return, not any single list.
@@ -187,7 +192,11 @@ def _choose_view(ctx: TraceContext) -> View:
     if _is_recursive(ctx):
         return View("call_stack")
 
-    read_arrays = [ref for ref, snaps in objects.items() if _is_scalar_list(snaps) and len(_items(snaps[-1][1])) > 1]
+    read_arrays = [
+        ref
+        for ref, snaps in objects.items()
+        if _is_scalar_list(snaps) and snaps[-1][1].get("kind") == "list" and len(_items(snaps[-1][1])) > 1
+    ]
     if read_arrays:
         best = max(read_arrays, key=lambda r: _read_count(ctx, r))
         return View("array", best)
@@ -294,21 +303,32 @@ def _input_arrays(ctx: TraceContext, objects: dict[str, list], exclude: str) -> 
     ][:1]
 
 
-def _behaves_like_stack(snaps: list[tuple[int, dict]]) -> bool:
+def _stack_end(snaps: list[tuple[int, dict]]) -> str | None:
+    """'back' or 'front' if the list only ever grows/shrinks at that one end
+    and is popped at least once; None otherwise."""
     pops = 0
+    end = None
     previous = _items(snaps[0][1])
     for _index, obj in snaps[1:]:
         current = _items(obj)
         if current == previous:
             continue
-        if len(current) == len(previous) + 1 and current[:-1] == previous:
-            pass
-        elif len(current) == len(previous) - 1 and current == previous[:-1]:
+        if len(current) == len(previous) + 1:
+            side = "back" if current[:-1] == previous else "front" if current[1:] == previous else None
+        elif len(current) == len(previous) - 1:
+            side = "back" if current == previous[:-1] else "front" if current == previous[1:] else None
             pops += 1
         else:
-            return False
+            return None
+        if side is None or (end is not None and side != end):
+            return None
+        end = side
         previous = current
-    return pops > 0
+    return end if pops else None
+
+
+def _behaves_like_stack(snaps: list[tuple[int, dict]]) -> bool:
+    return _stack_end(snaps) is not None
 
 
 def _is_recursive(ctx: TraceContext) -> bool:
@@ -523,8 +543,16 @@ def _emit_reads(
             label=str(j),
             caption=f"Compare {name}[{i}]={shown[i]} with {name}[{j}]={shown[j]}",
         )
+    elif is_comparison:
+        i, expr = indices[0]
+        out.add(
+            "compare_value",
+            index=i,
+            label=expr if expr != str(i) else f"i={i}",
+            caption=f"Compare {name}[{expr}]={shown[i]}: {_condition_with_values(line, env)}",
+        )
     else:
-        verb = "Check" if is_comparison else "Read"
+        verb = "Read"
         i, expr = indices[0]
         out.add(
             "highlight_index",
@@ -568,6 +596,15 @@ def _subscript_reads(line: str, aliases: set[str]) -> tuple[list[str], bool]:
 
     cleaned = re.sub(r"->|<<|>>|=>|<\s*[\w:]+(\s*,\s*[\w:]+)*\s*>", " ", rhs)
     return reads, bool(_COMPARISON.search(cleaned))
+
+
+def _condition_with_values(line: str, env: dict[str, Any]) -> str:
+    """The line's test with plain variables annotated by their current values."""
+    match = re.search(r"\b(?:if|while|elif)\b\s*\(?(.*)", line)
+    text = (match.group(1) if match else line).strip().rstrip(":{").rstrip(")").strip()
+    names = [n for n in dict.fromkeys(re.findall(r"(?<![\w.\[])([A-Za-z_]\w*)(?![\w\[(])", text)) if n in env]
+    values = ", ".join(f"{n}={_display(env[n])}" for n in names[:3])
+    return f"{text[:50]}" + (f"  ({values})" if values else "")
 
 
 def _index_variables(ctx: TraceContext, names: set[str]) -> list[str]:
@@ -688,19 +725,20 @@ def _build_grid(ctx: TraceContext, view: View, out: SceneBuilder) -> None:
 
 def _build_stack(ctx: TraceContext, view: View, out: SceneBuilder) -> None:
     previous: list | None = None
+    top_first = view.extra.get("end") == "front"
     for step in ctx.steps:
         items = _items_at(step, view.ref)
         if items is None:
             continue
         name = ctx.name_of(view.ref, step)
         if previous is None:
-            for value in items:
+            for value in (reversed(items) if top_first else items):
                 out.add("push_stack", label=str(_display(value)), caption=f"{name} starts with {_display(value)}")
         elif len(items) == len(previous) + 1:
-            value = _display(items[-1])
+            value = _display(items[0] if top_first else items[-1])
             out.add("push_stack", label=str(value), caption=f"Push {value} onto {name}")
         elif len(items) == len(previous) - 1:
-            value = _display(previous[-1])
+            value = _display(previous[0] if top_first else previous[-1])
             out.add("pop_stack", label=str(value), caption=f"Pop {value} from {name}")
         previous = items
     if previous is not None:
@@ -772,7 +810,10 @@ def _build_graph(ctx: TraceContext, view: View, out: SceneBuilder) -> None:
     nodes = list(adjacency.keys())
     edges, directed = _graph_edges(adjacency)
     names = ctx.all_names(view.ref)
-    current_vars, neighbor_vars = _graph_variables(ctx, names)
+    current_vars, neighbor_vars, traversal_lines = _graph_variables(ctx, names)
+    # Only frames of functions that traverse the graph count: an addEdge(u, v)
+    # helper has variables with the same names but is building, not visiting.
+    traversing = {s["func"] for s in ctx.steps if s["line"] in traversal_lines}
     weights = {(u, v): w for u, nbrs in adjacency.items() for v, w in nbrs}
     node_keys = {str(n) for n in nodes}
 
@@ -798,6 +839,9 @@ def _build_graph(ctx: TraceContext, view: View, out: SceneBuilder) -> None:
                 seen_current.pop(d, None)
                 seen_neighbor.pop(d, None)
         frame_locals = step["stack"][-1]["locals"] if step["stack"] else {}
+        if step["func"] not in traversing:
+            _emit_node_tables(ctx, step, view.ref, nodes, previous_tables, out)
+            continue
 
         for var in current_vars:
             value = _scalar(frame_locals.get(var), step["heap"])
@@ -846,24 +890,35 @@ _TYPE_WORDS = {
 }
 
 
-def _graph_variables(ctx: TraceContext, graph_names: set[str]) -> tuple[list[str], list[str]]:
-    """Variables used as 'current node' (graph[v]) and loop 'neighbor' (for x in graph[v])."""
+_BUILDING_CALL = re.compile(r"\s*\.\s*(add|append|push_back|push|offer|emplace_back|put|insert)\s*\(")
+
+
+def _graph_variables(
+    ctx: TraceContext, graph_names: set[str]
+) -> tuple[list[str], list[str], set[int]]:
+    """Variables used as 'current node' (graph[v]) and loop 'neighbor'
+    (for x in graph[v]), plus the lines where the graph is traversed."""
     current: list[str] = []
     neighbors: list[str] = []
-    for line in ctx.lines:
+    traversal_lines: set[int] = set()
+    for number, line in enumerate(ctx.lines, start=1):
         for name in graph_names:
             for match in re.finditer(
                 rf"(?<![\w.]){re.escape(name)}\s*(?:\[\s*(\w+)\s*\]|\.get\(\s*(\w+)\s*\))", line
             ):
+                if _BUILDING_CALL.match(line, match.end()):
+                    continue  # adj[u].append(v) builds the graph; it is not a visit
                 var = match.group(1) or match.group(2)
-                if var and not var.isdigit() and var not in current:
-                    current.append(var)
+                if var and not var.isdigit():
+                    traversal_lines.add(number)
+                    if var not in current:
+                        current.append(var)
                 header = re.search(r"\bfor\b\s*\(?(.*?)(?:\bin\b|\bof\b|:)\s*" + re.escape(name), line)
                 if header:
                     words = [w for w in re.findall(r"[A-Za-z_]\w*", header.group(1)) if w not in _TYPE_WORDS]
                     if words and words[0] not in neighbors:
                         neighbors.append(words[0])
-    return current, [n for n in neighbors if n not in current]
+    return current, [n for n in neighbors if n not in current], traversal_lines
 
 
 def _emit_node_tables(
@@ -1065,7 +1120,7 @@ def _build_call_stack(ctx: TraceContext, view: View, out: SceneBuilder) -> None:
     open_calls: list[str] = []
     for step in ctx.steps:
         func = step["func"]
-        if _is_constructor(func) or func == "<module>":
+        if _is_constructor(func) or func == "<module>" or (func == "main" and ctx.language in {"java", "cpp"}):
             continue
         if step["event"] == "call":
             args = ", ".join(
@@ -1115,7 +1170,8 @@ VIEW_BUILDERS = {
 
 def _title(ctx: TraceContext, view: View) -> str:
     funcs = ctx.user_functions()
-    if funcs:
+    main_steps = sum(1 for st in ctx.steps if st["func"] == "main")
+    if funcs and funcs.most_common(1)[0][1] >= main_steps:
         return f"{funcs.most_common(1)[0][0]}() step by step"
     return "Your code step by step"
 

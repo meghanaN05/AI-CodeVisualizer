@@ -41,6 +41,12 @@ def build_visualization_plan(
             return plan
         # The code was run; a template video with made-up data would be
         # misleading, so report why there is nothing to show instead.
+        if trace.get("error") and trace.get("driver"):
+            raise ValueError(
+                "Your snippet has no call, and the example input we generated "
+                f"({trace['driver']['description'].split(': ', 1)[-1]}) made it fail with "
+                f"{trace['error']}. Add a call with your own input, e.g. at the end of the snippet."
+            )
         if trace.get("error"):
             raise ValueError(f"Your code could not run: {trace['error']}")
         raise ValueError(
