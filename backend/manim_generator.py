@@ -64,6 +64,7 @@ class CodeVisualization(MovingCameraScene):
         self.array_anchor = None
         self.named_pointers = None
         self.collection_group = None
+        self.heap_tree = None
         self.pointer_order = []
         self.current_graph_node = None
 
@@ -149,6 +150,12 @@ class CodeVisualization(MovingCameraScene):
                 self._show_flow(step.get("from"), step.get("to"), step.get("caption"))
             elif action == "show_pointers":
                 self._show_pointers(step.get("variables", {{}}))
+            elif action == "show_heap_tree":
+                self._show_heap_tree(step.get("values", []), step.get("label", "heap"), step.get("caption"))
+            elif action == "heap_insert":
+                self._heap_change(step.get("nodes", []), step.get("values", []), step.get("caption"), popped=None)
+            elif action == "heap_extract":
+                self._heap_change(step.get("nodes", []), step.get("values", []), step.get("caption"), popped=step.get("label"))
             elif action == "show_collection":
                 self._show_collection(step.get("text", ""), step.get("values", []), step.get("label", "list"), step.get("caption"))
             elif action == "compare_value":
@@ -339,6 +346,177 @@ class CodeVisualization(MovingCameraScene):
             self.named_pointers = group
             self.play(FadeIn(group), run_time=0.4)
 
+    # ---- heap: binary tree on top, the backing array underneath.
+    # Layout bands (viz area is 14 x 8): tree y 0.4..3.6, array row y -0.45,
+    # side collection y -1.45, variables y -2.35, caption y -3.5.
+
+    def _heap_slot(self, index, count):
+        depth = int(math.log2(index + 1))
+        levels = max(1, int(math.log2(max(count, 1))) + 1)
+        position = index - (2 ** depth - 1)
+        width = 12.4
+        x = (position + 0.5) * width / (2 ** depth) - width / 2
+        row_gap = min(1.0, 3.0 / max(levels - 1, 1))
+        return RIGHT * x + UP * (3.4 - depth * row_gap)
+
+    def _heap_cell_slot(self, index, count):
+        # Wide enough for the longest label (pairs like "12,3"), but the whole
+        # row must still fit the 12.4-unit band.
+        size = min(getattr(self, "heap_cell_w", 0.7), 12.4 / max(count, 1))
+        return RIGHT * ((index - (count - 1) / 2) * size) + DOWN * 0.45, size
+
+    def _heap_node(self, value, count):
+        radius = 0.34 if count <= 15 else 0.26 if count <= 31 else 0.18
+        circle = Circle(radius=radius, color=BLUE, fill_opacity=0.25)
+        label = Text(str(value), font_size=26, color=WHITE)
+        if label.width > radius * 1.7:
+            label.scale_to_fit_width(radius * 1.7)
+        return VGroup(circle, label.move_to(circle.get_center()))
+
+    def _heap_cell(self, value, size):
+        box = Square(side_length=size * 0.92, color=TEAL, fill_opacity=0.15)
+        label = Text(str(value), font_size=22, color=WHITE)
+        if label.width > size * 0.8:
+            label.scale_to_fit_width(size * 0.8)
+        return VGroup(box, label.move_to(box.get_center()))
+
+    def _heap_edges(self, count):
+        edges = VGroup()
+        for child in range(1, count):
+            parent = (child - 1) // 2
+            edges.add(Line(self._heap_slot(parent, count), self._heap_slot(child, count), color=GRAY_B, stroke_width=2))
+        return edges
+
+    def _heap_index_row(self, count):
+        row = VGroup()
+        for i in range(count):
+            slot, size = self._heap_cell_slot(i, count)
+            row.add(Text(str(i), font_size=16, color=GRAY_B).move_to(slot + DOWN * (size * 0.5 + 0.15)))
+        return row
+
+    def _build_heap(self, values):
+        count = len(values)
+        nodes = [self._heap_node(v, count).move_to(self._heap_slot(i, count)) for i, v in enumerate(values)]
+        cells = []
+        for i, v in enumerate(values):
+            slot, size = self._heap_cell_slot(i, count)
+            cells.append(self._heap_cell(v, size).move_to(slot))
+        return nodes, cells
+
+    def _fit_heap_cells(self, *value_lists):
+        longest = max((len(str(v)) for values in value_lists for v in values), default=1)
+        self.heap_cell_w = max(0.7, min(1.6, 0.2 * longest + 0.35))
+
+    def _show_heap_tree(self, values, label, caption):
+        if caption:
+            self._show_caption(caption)
+        self._fit_heap_cells(values)
+        if self.heap_tree is not None:
+            self.play(FadeOut(self.heap_tree["group"]))
+        nodes, cells = self._build_heap(values)
+        edges = self._heap_edges(len(values))
+        tag = Text(label, font_size=24, color=TEAL).move_to(LEFT * 5.6 + UP * 3.7)
+        indexes = self._heap_index_row(len(values))
+        group = VGroup(edges, *nodes, *cells, tag, indexes)
+        self.heap_tree = {{"nodes": nodes, "cells": cells, "edges": edges, "tag": tag, "indexes": indexes, "group": group, "values": list(values)}}
+        if values:
+            self.play(Create(edges), *[GrowFromCenter(n) for n in nodes], *[FadeIn(c) for c in cells], FadeIn(tag), FadeIn(indexes))
+        else:
+            empty = Text("(empty heap)", font_size=26, color=GRAY_B).move_to(UP * 2.0)
+            self.heap_tree["nodes"] = []
+            group.add(empty)
+            self.play(FadeIn(tag), FadeIn(empty))
+            self.heap_tree["empty"] = empty
+        self.wait(0.3)
+
+    def _heap_match(self, before, after):
+        # Pair each slot of `before` with a slot of `after` holding the same
+        # value (nearest index first), i.e. where every element moved to.
+        used, mapping = set(), {{}}
+        for j, value in enumerate(after):
+            candidates = [i for i, v in enumerate(before) if v == value and i not in used]
+            if candidates:
+                i = min(candidates, key=lambda i: abs(i - j))
+                used.add(i)
+                mapping[i] = j
+        return mapping
+
+    def _heap_change(self, before, after, caption, popped=None):
+        if self.heap_tree is None:
+            self._show_heap_tree(after, "heap", caption)
+            return
+        if caption:
+            self._show_caption(caption)
+        state = self.heap_tree
+        if state.get("empty") is not None:
+            self.play(FadeOut(state["empty"]))
+            state["empty"] = None
+        old_count = len(state["values"])
+        nodes, cells = list(state["nodes"]), list(state["cells"])
+
+        if popped is not None and nodes:
+            # Remove the top, then bring the last element up to the root.
+            root_node, root_cell = nodes[0], cells[0]
+            self.play(root_node[0].animate.set_color(RED).set_fill(RED, opacity=0.5), root_cell[0].animate.set_color(RED))
+            self.play(FadeOut(root_node, shift=UP * 0.4), FadeOut(root_cell, shift=UP * 0.3))
+            if len(nodes) > 1:
+                last_node, last_cell = nodes.pop(), cells.pop()
+                nodes[0], cells[0] = last_node, last_cell
+                self.play(
+                    last_node.animate.move_to(self._heap_slot(0, old_count)).set_color(YELLOW),
+                    last_cell.animate.move_to(self._heap_cell_slot(0, old_count)[0]),
+                )
+            else:
+                nodes, cells = [], []
+        else:
+            # Add the new value as the last leaf; the existing nodes and cells
+            # first slide into the layout for the new size so nothing overlaps.
+            new_count = old_count + 1
+            value = before[-1] if before else (after[-1] if after else "")
+            self._fit_heap_cells(state["values"], before, after)
+            node = self._heap_node(value, new_count).move_to(self._heap_slot(old_count, new_count))
+            node[0].set_color(GREEN).set_fill(GREEN, opacity=0.45)
+            slot, size = self._heap_cell_slot(old_count, new_count)
+            cell = self._heap_cell(value, size).move_to(slot)
+            relayout = [n.animate.move_to(self._heap_slot(i, new_count)) for i, n in enumerate(nodes)]
+            relayout += [c.animate.move_to(self._heap_cell_slot(i, new_count)[0]) for i, c in enumerate(cells)]
+            nodes.append(node)
+            cells.append(cell)
+            self.play(*relayout, GrowFromCenter(node), FadeIn(cell, shift=DOWN * 0.2))
+
+        count = len(after)
+        new_edges = self._heap_edges(count)
+        new_indexes = self._heap_index_row(count)
+        mapping = self._heap_match(before, after)
+        placed_nodes, placed_cells = [None] * count, [None] * count
+        moves = []
+        for i, j in mapping.items():
+            if i < len(nodes):
+                placed_nodes[j], placed_cells[j] = nodes[i], cells[i]
+                _cslot, csize = self._heap_cell_slot(j, count)
+                moves.append(nodes[i].animate.move_to(self._heap_slot(j, count)))
+                moves.append(cells[i].animate.move_to(_cslot))
+        # Replace (not morph) edges and index labels: morphing a group into a
+        # smaller or empty one leaves the extra lines behind on screen.
+        moves.append(FadeOut(state["edges"]))
+        moves.append(FadeOut(state["indexes"]))
+        moves.append(FadeIn(new_edges))
+        moves.append(FadeIn(new_indexes))
+        self.play(*moves, run_time=0.9)
+        self.remove(state["edges"], state["indexes"])
+        state["edges"], state["indexes"] = new_edges, new_indexes
+        for j in range(count):
+            if placed_nodes[j] is None:  # value we could not match: draw it fresh
+                placed_nodes[j] = self._heap_node(after[j], count).move_to(self._heap_slot(j, count))
+                placed_cells[j] = self._heap_cell(after[j], self._heap_cell_slot(j, count)[1]).move_to(self._heap_cell_slot(j, count)[0])
+                self.add(placed_nodes[j], placed_cells[j])
+        leftovers = [m for m in nodes + cells if m not in placed_nodes and m not in placed_cells and m in self.mobjects]
+        if leftovers:
+            self.remove(*leftovers)
+        self.play(*[n[0].animate.set_color(BLUE).set_fill(BLUE, opacity=0.25) for n in placed_nodes], run_time=0.3)
+        state.update(nodes=placed_nodes, cells=placed_cells, values=list(after))
+        state["group"] = VGroup(state["edges"], *placed_nodes, *placed_cells, state["tag"], state["indexes"])
+
     def _show_collection(self, name, values, kind, caption):
         # A second, smaller row for another container the code builds.
         if caption:
@@ -357,7 +535,10 @@ class CodeVisualization(MovingCameraScene):
         group = VGroup(tag, cells).arrange(RIGHT, buff=0.3)
         if group.width > 12.5:
             group.scale_to_fit_width(12.5)
-        group.move_to(DOWN * 1.2 if self.array_anchor == "top" else UP * 2.6)
+        if self.heap_tree is not None:
+            group.move_to(DOWN * 1.45)
+        else:
+            group.move_to(DOWN * 1.2 if self.array_anchor == "top" else UP * 2.6)
         if self.collection_group is not None:
             self.play(ReplacementTransform(self.collection_group, group), run_time=0.6)
         else:
@@ -782,7 +963,7 @@ class CodeVisualization(MovingCameraScene):
     def _show_variables(self, variables, caption):
         if caption:
             self._show_caption(caption)
-        if self.array_anchor == "top" and self.array_boxes:
+        if (self.array_anchor == "top" and self.array_boxes) or self.heap_tree is not None:
             self._show_variable_row(variables)
             return
         lines = [f"{{name}} = {{value}}" for name, value in variables.items()]

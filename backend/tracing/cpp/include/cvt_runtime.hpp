@@ -516,18 +516,17 @@ struct Ser<std::queue<T, C>> : HeapSer<std::queue<T, C>> {  // front ... back
 };
 template <class T, class C, class Cmp>
 struct Ser<std::priority_queue<T, C, Cmp>> : HeapSer<std::priority_queue<T, C, Cmp>> {
-  static void obj(W& w, const std::priority_queue<T, C, Cmp>& q) {  // top first
+  // The underlying container in its real binary-heap layout (top at index
+  // 0, children of i at 2i+1 and 2i+2), so the planner can draw the tree.
+  static void obj(W& w, const std::priority_queue<T, C, Cmp>& q) {
     using PQ = std::priority_queue<T, C, Cmp>;
     const auto& c = PqAccess<PQ>::items(q);
-    auto comp = PqAccess<PQ>::comparator(q);
-    std::vector<const T*> order;
-    for (const auto& x : c) order.push_back(&x);
-    std::stable_sort(order.begin(), order.end(),
-                     [&](const T* a, const T* b) { return comp(*b, *a); });
     w.raw("{\"kind\":\"list\",\"items\":[");
-    for (std::size_t i = 0; i < order.size() && i < MAX_ITEMS; ++i) {
-      if (i) w.raw(",");
-      w.value(*order[i]);
+    std::size_t i = 0;
+    for (const auto& x : c) {
+      if (i >= MAX_ITEMS) break;
+      if (i++) w.raw(",");
+      w.value(x);
     }
     w.raw("]}");
   }

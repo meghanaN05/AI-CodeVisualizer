@@ -22,6 +22,7 @@ from typing import Any
 # Scenes that show the RESULT of the previous line (the state changed), as
 # opposed to the line about to run (a read, a visit, a call).
 STATE_ACTIONS = {
+    "show_heap_tree", "heap_insert", "heap_extract",
     "create_array", "swap_indices", "set_index", "set_cell", "show_grid",
     "push_stack", "pop_stack", "show_hashmap", "hashmap_insert", "update_distance",
     "show_linked_list", "show_variables", "show_collection",
@@ -215,6 +216,12 @@ def _choose_view(ctx: TraceContext) -> View:
     graph = _find_graph(ctx, objects)
     if graph:
         return graph
+
+    # Heap before grid: a heap of pairs also looks like an n x 2 table, but
+    # heap behaviour (ordering + pops from the top) is the stronger signal.
+    heap = _find_heap(ctx, objects)
+    if heap:
+        return heap
 
     grid = _find_grid(ctx, objects)
     if grid:
@@ -428,6 +435,82 @@ def _shared_across_recursion(ctx: TraceContext, ref: str) -> bool:
     return False
 
 
+def _heap_key(value: Any, heap: dict[str, Any]) -> Any:
+    """A comparable key for a heap element: scalars as-is, tuples/pairs
+    (e.g. (distance, node)) as tuples of scalars."""
+    if isinstance(value, (int, float, str)) and not isinstance(value, bool):
+        return value
+    obj = heap.get(_ref(value) or "", {})
+    if obj.get("kind") in {"tuple", "list"} and obj.get("items"):
+        keys = tuple(_heap_key(v, heap) for v in obj["items"])
+        return None if any(k is None for k in keys) else keys
+    return None
+
+
+def _heap_order(ctx: TraceContext, snaps: list[tuple[int, dict]]) -> str | None:
+    """'min' or 'max' if this list behaves like a binary heap: the heap
+    property (a[i] vs a[2i+1], a[2i+2]) holds at every step, and the program
+    pops the top or pushes values that sift away from the end."""
+    possible = {"min", "max"}
+    largest = 0
+    heap_like_change = False
+    previous: list | None = None
+    for index, obj in snaps:
+        if obj.get("kind") != "list":
+            return None
+        keys = [_heap_key(v, ctx.steps[index]["heap"]) for v in obj.get("items") or []]
+        if any(k is None for k in keys):
+            return None
+        try:
+            for i, key in enumerate(keys):
+                for child in (2 * i + 1, 2 * i + 2):
+                    if child < len(keys):
+                        if key > keys[child]:
+                            possible.discard("min")
+                        if key < keys[child]:
+                            possible.discard("max")
+        except TypeError:
+            return None
+        if not possible:
+            return None
+        largest = max(largest, len(keys))
+        if previous is not None and keys != previous:
+            if len(keys) == len(previous) + 1:
+                heap_like_change |= keys[:-1] != previous  # it sifted, not appended
+            elif len(keys) == len(previous) - 1:
+                # The top was removed while others remain, and the rest
+                # reshuffled (a stack pop would just drop the last element).
+                heap_like_change |= (
+                    len(previous) >= 2
+                    and keys != previous[:-1]
+                    and Counter(previous) - Counter(keys) == Counter([previous[0]])
+                )
+            elif len(keys) == len(previous):
+                heap_like_change |= keys[0] != previous[0]  # replace-top
+            else:
+                return None
+        previous = keys
+    if largest < 3 or not heap_like_change:
+        return None
+    return "min" if "min" in possible else "max"
+
+
+def _find_heap(ctx: TraceContext, objects: dict[str, list]) -> View | None:
+    best: tuple[int, str, str] | None = None
+    for ref, snaps in objects.items():
+        if len(snaps) < 2:
+            continue
+        order = _heap_order(ctx, snaps)
+        if order is None:
+            continue
+        changes = _mutation_count(snaps)
+        if best is None or changes > best[0]:
+            best = (changes, ref, order)
+    if best is None:
+        return None
+    return View("heap", best[1], {"order": best[2]})
+
+
 def _find_grid(ctx: TraceContext, objects: dict[str, list]) -> View | None:
     """A rectangular list of scalar rows that the program writes or indexes twice."""
     best: tuple[int, str] | None = None
@@ -458,8 +541,8 @@ def _grid_rows(obj: dict[str, Any], heap: dict[str, Any]) -> list[list] | None:
     for item in obj.get("items") or []:
         row = heap.get(_ref(item) or "", {})
         values = row.get("items")
-        if row.get("kind") not in {"list", "tuple"} or not values or not _all_scalars(values):
-            return None
+        if row.get("kind") != "list" or not values or not _all_scalars(values):
+            return None  # tuple rows are records like (count, num), not a grid
         rows.append(values)
     if len(rows) < 2 or len({len(r) for r in rows}) != 1:
         return None
@@ -586,6 +669,8 @@ def _emit_side_collections(
         values = [_display(v) for v in obj.get("items") or []]
         if not _all_scalars(obj.get("items") or []) or shown.get(var) == values:
             continue
+        if var not in shown and not values:
+            continue  # introduce it once it holds something
         shown[var] = values
         kind = "set" if obj.get("kind") == "set" else "list"
         out.add(
@@ -846,6 +931,72 @@ def _build_grid(ctx: TraceContext, view: View, out: SceneBuilder) -> None:
                 if key != last_read:
                     last_read = key
                     out.add("highlight_cell", row=r, col=c, caption=f"Check {name}[{r}][{c}] = {display[r][c]}")
+
+
+# ----------------------------------------------------------------- heap view
+
+
+def _build_heap(ctx: TraceContext, view: View, out: SceneBuilder) -> None:
+    order = view.extra["order"]
+    top_word = "smallest" if order == "min" else "largest"
+    previous: list | None = None
+    last_scalars: dict | None = None
+    shown_collections: dict[str, list] = {}
+
+    for index, step in out.walk(ctx):
+        obj = step["heap"].get(view.ref)
+        if obj is None:
+            continue
+        name = ctx.name_of(view.ref, step)
+        values = [_heap_label(v, step["heap"]) for v in obj.get("items") or []]
+
+        if previous is None:
+            out.add(
+                "show_heap_tree",
+                values=values,
+                label=f"{order}-heap",
+                caption=f"{name}: a {order}-heap, the {top_word} value is always on top",
+            )
+        elif values != previous:
+            if len(values) == len(previous) + 1:
+                added = (Counter(values) - Counter(previous)).most_common(1)
+                value = added[0][0] if added else values[-1]
+                out.add(
+                    "heap_insert",
+                    values=values,
+                    nodes=previous + [value],
+                    label=str(value),
+                    caption=f"Push {value}: add it at the end, then sift it up",
+                )
+            elif len(values) == len(previous) - 1 and previous:
+                root = previous[0]
+                out.add(
+                    "heap_extract",
+                    values=values,
+                    nodes=([previous[-1]] + previous[1:-1]) if len(previous) > 1 else [],
+                    label=str(root),
+                    caption=f"Pop {root} (the {top_word}): move the last value to the top, then sift it down",
+                )
+            else:
+                out.add("show_heap_tree", values=values, label=f"{order}-heap", caption=f"{name} = {_fmt_list(values)}")
+        previous = values
+
+        frame = _frame_holding(step, view.ref)
+        if frame is not None and not _is_constructor(frame["func"]):
+            scalars = {k: _display(v) for k, v in frame["locals"].items() if isinstance(v, SCALAR_TYPES)}
+            if scalars and scalars != last_scalars:
+                out.add("show_variables", variables=scalars)
+                last_scalars = scalars
+            _emit_side_collections(step, frame, view.ref, shown_collections, out)
+
+
+def _heap_label(value: Any, heap: dict[str, Any]) -> str:
+    if isinstance(value, SCALAR_TYPES):
+        return str(_display(value))
+    obj = heap.get(_ref(value) or "", {})
+    if obj.get("kind") in {"tuple", "list"}:
+        return ",".join(_heap_label(v, heap) for v in obj.get("items") or [])
+    return "…"
 
 
 # ---------------------------------------------------------------- stack view
@@ -1282,6 +1433,7 @@ def _build_variables(ctx: TraceContext, view: View, out: SceneBuilder) -> None:
 
 VIEW_BUILDERS = {
     "array": _build_array,
+    "heap": _build_heap,
     "grid": _build_grid,
     "stack": _build_stack,
     "hashmap": _build_hashmap,

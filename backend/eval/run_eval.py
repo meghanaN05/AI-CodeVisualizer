@@ -43,7 +43,7 @@ VISUAL_ACTIONS: dict[str, set[str]] = {
     "call_stack": {"push_stack"},
     "stack": {"push_stack"},
     "hashmap": {"show_hashmap", "hashmap_insert"},
-    "heap": {"show_heap", "heap_push"},
+    "heap": {"show_heap", "heap_push", "show_heap_tree", "heap_insert"},
     "linked_list": {"show_linked_list"},
 }
 
