@@ -2,7 +2,8 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install system dependencies required by Manim
+# System dependencies: Manim (ffmpeg, cairo, pango) and the snippet tracers
+# (g++ for C++, nodejs for JavaScript, a full JDK with jdk.jdi for Java)
 RUN apt-get update && apt-get install -y \
   ffmpeg \
   libcairo2-dev \
@@ -10,6 +11,8 @@ RUN apt-get update && apt-get install -y \
   pkg-config \
   python3-dev \
   build-essential \
+  nodejs \
+  openjdk-17-jdk-headless \
   && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies

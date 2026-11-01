@@ -8,10 +8,12 @@ other domain (arrays, sorts, recursion, hash maps, classifier leftovers).
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Callable
 
 from ai import generate_animation_plan
 from analyzer import analyze
+from trace_planner import plan_from_trace
+from tracing import trace_code
 from visualization.graph import plan_graph
 from visualization.layout import apply_layout
 from visualization.schema import DslStep, VisualizationDocument
@@ -20,8 +22,38 @@ from visualization.tree import plan_tree
 from visualization.validator import validate_document
 
 
-def build_visualization_plan(code: str, language: str) -> dict[str, Any]:
-    """Analyze and plan. Returns the final plan in the renderer's scene shape."""
+def build_visualization_plan(
+    code: str, language: str, report: Callable[[str], None] | None = None
+) -> dict[str, Any]:
+    """Analyze and plan. Returns the final plan in the renderer's scene shape.
+
+    Executing the snippet and animating its real trace is the primary path;
+    the pattern-based planners below only run when no trace is available.
+    `report` receives the stage name ("tracing", "planning") as work starts.
+    """
+    report = report or (lambda _stage: None)
+    report("tracing")
+    trace = trace_code(code, language)
+    report("planning")
+    if trace is not None:
+        plan = plan_from_trace(trace, code)
+        if plan is not None:
+            return plan
+        # The code was run; a template video with made-up data would be
+        # misleading, so report why there is nothing to show instead.
+        if trace.get("error") and trace.get("driver"):
+            raise ValueError(
+                "Your snippet has no call, and the example input we generated "
+                f"({trace['driver']['description'].split(': ', 1)[-1]}) made it fail with "
+                f"{trace['error']}. Add a call with your own input, e.g. at the end of the snippet."
+            )
+        if trace.get("error"):
+            raise ValueError(f"Your code could not run: {trace['error']}")
+        raise ValueError(
+            "Your code ran but did nothing that can be animated. "
+            "Add a call to your function (or a main) with example input."
+        )
+
     ir = analyze(code, language)
     domain = ir.get("classification", {}).get("domain", "generic")
 

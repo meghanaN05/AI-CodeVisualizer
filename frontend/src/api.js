@@ -1,6 +1,10 @@
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
-export async function generateVideo(code, language) {
+const POLL_INTERVAL_MS = 1500;
+
+// Starts a background render job, then polls it until it finishes.
+// onStage receives the backend stage: "queued" | "tracing" | "planning" | "rendering".
+export async function generateVideo(code, language, onStage = () => {}) {
   const response = await fetch(`${API_URL}/generate`, {
     method: "POST",
     headers: {
@@ -15,11 +19,33 @@ export async function generateVideo(code, language) {
     throw new Error(data.detail || "Video generation failed");
   }
 
-  if (data.video_url && data.video_url.startsWith("/")) {
-    data.video_url = `${API_URL}${data.video_url}`;
+  onStage(data.status);
+  const result = await pollJob(data.job_id, onStage);
+
+  if (result.video_url && result.video_url.startsWith("/")) {
+    result.video_url = `${API_URL}${result.video_url}`;
   }
 
-  return data;
+  return result;
+}
+
+async function pollJob(jobId, onStage) {
+  for (;;) {
+    await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+    const response = await fetch(`${API_URL}/jobs/${jobId}`);
+    const job = await response.json();
+
+    if (!response.ok) {
+      throw new Error(job.detail || "Lost track of the video job");
+    }
+    if (job.status === "done") {
+      return job.result;
+    }
+    if (job.status === "failed") {
+      throw new Error(job.error || "Video generation failed");
+    }
+    onStage(job.status);
+  }
 }
 
 export async function parseCode(code, language) {
