@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from tracing.driver import DriverPlan, Param, candidate_args, input_score
+from tracing.driver import DriverPlan, Param, Structure, candidate_args, input_score
 from tracing.sandbox import MAX_TRACE_STEPS, parse_trace_output, run_sandboxed
 
 RUNNER = Path(__file__).resolve().parent / "python_runner.py"
@@ -114,9 +114,16 @@ def _plan_drivers(code: str, variant: str) -> list[DriverPlan]:
 
 
 def _render_call(driver: DriverPlan) -> str:
-    args = ", ".join(repr(value) for _name, value in driver.args)
+    args = ", ".join(_literal(value) for _name, value in driver.args)
     target = f"{driver.owner_class}().{driver.function}" if driver.owner_class else driver.function
     return f"\n\n{target}({args})\n"
+
+
+def _literal(value: Any) -> str:
+    if isinstance(value, Structure):
+        builder, cls = ("_cvt_tree", "TreeNode") if value.kind == "tree" else ("_cvt_list", "ListNode")
+        return f"{builder}({list(value.values)!r}, {cls})"
+    return repr(value)
 
 
 def _mutates_array_arg(trace: dict[str, Any], driver: DriverPlan) -> bool:

@@ -92,7 +92,7 @@ class CodeVisualization(MovingCameraScene):
             elif action == "swap_indices":
                 self._swap_indices(step.get("index", 0), step.get("label", "1"), step.get("values", []), step.get("caption"))
             elif action == "show_tree":
-                self._show_tree(step.get("tree", {{}}), step.get("layout"))
+                self._show_tree(step.get("tree", {{}}), step.get("layout"), step.get("caption"))
             elif action == "highlight_node":
                 self._highlight_node(step.get("node"), step.get("caption"))
             elif action == "move_pointer":
@@ -633,11 +633,35 @@ class CodeVisualization(MovingCameraScene):
         self.array_values = [str(v) for v in values]
         self.play(box.animate.set_color(BLUE).set_fill(BLUE, opacity=0.15), run_time=0.4)
 
-    def _show_tree(self, tree, layout=None):
+    def _tree_key(self, node):
+        # Nodes are identified by object id when the plan has one, so equal
+        # values (a BST with a duplicate) still get their own circles.
+        return str(node.get("id", node.get("value")))
+
+    def _resolve_tree_node(self, node):
+        key = str(node)
+        if key in self.tree_nodes:
+            return key
+        return getattr(self, "tree_alias", {{}}).get(key)
+
+    def _show_tree(self, tree, layout=None, caption=None):
+        if caption:
+            self._show_caption(caption)
         self._clear_tree()
         self.tree_nodes = {{}}
+        self.tree_alias = {{}}
         self.tree_edges = VGroup()
+        labels = {{}}
 
+        def collect(node):
+            if node and "value" in node:
+                key = self._tree_key(node)
+                labels[key] = node.get("value")
+                self.tree_alias.setdefault(str(node.get("value")), key)
+                collect(node.get("left"))
+                collect(node.get("right"))
+
+        collect(tree)
         positions = {{}}
         if isinstance(layout, dict) and layout:
             for value, point in layout.items():
@@ -649,32 +673,34 @@ class CodeVisualization(MovingCameraScene):
         nodes_group = VGroup()
         edges_group = VGroup()
 
-        for value, (x, y) in positions.items():
+        for key, (x, y) in positions.items():
             circle = Circle(radius=0.45, color=BLUE, fill_opacity=0.2)
-            label = Text(str(value), font_size=30, color=WHITE)
+            label = Text(str(labels.get(key, key)), font_size=30, color=WHITE)
+            if label.width > 0.75:
+                label.scale_to_fit_width(0.75)
             label.move_to(circle.get_center())
             node = VGroup(circle, label)
             node.move_to(RIGHT * x + UP * y)
-            self.tree_nodes[str(value)] = node
+            self.tree_nodes[key] = node
             self._tree_objects.append(circle)
             self._tree_objects.append(label)
             nodes_group.add(node)
 
-        def add_edges(node, x, y, spread):
+        def add_edges(node):
             if not node:
                 return
-            value = str(node.get("value"))
-            for side, child_key in (("left", "left"), ("right", "right")):
-                child = node.get(child_key)
+            key = self._tree_key(node)
+            for side in ("left", "right"):
+                child = node.get(side)
                 if child and "value" in child:
-                    cx, cy = positions[str(child["value"])]
-                    start = self.tree_nodes[value][0].get_center()
-                    end = self.tree_nodes[str(child["value"])][0].get_center()
-                    edge = Line(start, end, color=GRAY_B, stroke_width=3)
-                    edges_group.add(edge)
-                    add_edges(child, cx, cy, spread / 2)
+                    child_key = self._tree_key(child)
+                    if key in self.tree_nodes and child_key in self.tree_nodes:
+                        start = self.tree_nodes[key][0].get_center()
+                        end = self.tree_nodes[child_key][0].get_center()
+                        edges_group.add(Line(start, end, color=GRAY_B, stroke_width=3))
+                    add_edges(child)
 
-        add_edges(tree, 0, 0, 2.8)
+        add_edges(tree)
         self.tree_edges = edges_group
         self.play(Create(edges_group), LaggedStart(*[GrowFromCenter(n[0]) for n in nodes_group], lag_ratio=0.1))
         self.play(LaggedStart(*[Write(n[1]) for n in nodes_group], lag_ratio=0.1))
@@ -712,7 +738,7 @@ class CodeVisualization(MovingCameraScene):
     def _assign_tree_positions(self, node, x, y, spread, positions):
         if not node or "value" not in node:
             return
-        positions[str(node["value"])] = (x, y)
+        positions[self._tree_key(node)] = (x, y)
         if node.get("left"):
             self._assign_tree_positions(node["left"], x - spread, y - 1.8, spread / 2, positions)
         if node.get("right"):
@@ -721,8 +747,8 @@ class CodeVisualization(MovingCameraScene):
     def _highlight_node(self, node, caption):
         if caption:
             self._show_caption(caption)
-        key = str(node)
-        if key not in self.tree_nodes:
+        key = self._resolve_tree_node(node)
+        if key is None:
             return
         anims = []
         for value, group in self.tree_nodes.items():
@@ -765,6 +791,7 @@ class CodeVisualization(MovingCameraScene):
             self.play(*anims)
             self.wait(0.4)
             return
+        key = self._resolve_tree_node(key) or key
         if key in self.tree_nodes:
             check = Text("✓", font_size=28, color=GREEN).next_to(self.tree_nodes[key], UP, buff=0.15)
             if caption:

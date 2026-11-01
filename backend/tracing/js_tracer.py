@@ -38,7 +38,7 @@ from typing import Any
 import tree_sitter_javascript
 from tree_sitter import Language, Node, Parser
 
-from tracing.driver import DriverPlan, Param, synthesize_args
+from tracing.driver import DriverPlan, Param, Structure, synthesize_args
 from tracing.python_tracer import _has_user_calls, _mutates_array_arg
 from tracing.sandbox import MAX_TRACE_STEPS, SandboxResult, parse_trace_output, run_sandboxed
 
@@ -676,6 +676,13 @@ def _js_type_hint(jsdoc_type: str) -> str:
 
 
 def _render_call(driver: DriverPlan) -> str:
-    args = ", ".join(json.dumps(value) for _name, value in driver.args)
+    args = ", ".join(_js_literal(value) for _name, value in driver.args)
     target = f"new {driver.owner_class}().{driver.function}" if driver.owner_class else driver.function
     return f"\n\n;{target}({args});\n"
+
+
+def _js_literal(value: Any) -> str:
+    if isinstance(value, Structure):
+        builder = "__cvtTree" if value.kind == "tree" else "__cvtList"
+        return f"{builder}({json.dumps(list(value.values))})"
+    return json.dumps(value)

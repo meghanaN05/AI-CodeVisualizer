@@ -22,7 +22,7 @@ from typing import Any
 # Scenes that show the RESULT of the previous line (the state changed), as
 # opposed to the line about to run (a read, a visit, a call).
 STATE_ACTIONS = {
-    "show_heap_tree", "heap_insert", "heap_extract",
+    "show_heap_tree", "heap_insert", "heap_extract", "show_tree",
     "create_array", "swap_indices", "set_index", "set_cell", "show_grid",
     "push_stack", "pop_stack", "show_hashmap", "hashmap_insert", "update_distance",
     "show_linked_list", "show_variables", "show_collection",
@@ -1258,15 +1258,23 @@ def _build_tree(ctx: TraceContext, view: View, out: SceneBuilder) -> None:
     value_field = view.extra["value_field"]
     cls = view.extra["class"]
 
+    # Open on the tree as it is when the user's function starts working on
+    # it (later reshaping and growth are redrawn as they happen). Code that
+    # builds its tree from scratch opens once the tree has two nodes.
+    first_call = next(
+        (i for i, st in enumerate(ctx.steps) if st["event"] == "call" and not _is_setup_frame(ctx, st["func"])),
+        0,
+    )
     best_index, best_tree, best_refs = None, None, set()
-    for index, step in enumerate(ctx.steps):
-        heap = step["heap"]
-        roots = _tree_roots(heap, cls, left, right)
-        for root in roots:
+    for index in range(first_call, len(ctx.steps)):
+        heap = ctx.steps[index]["heap"]
+        for root in _tree_roots(heap, cls, left, right):
             refs: set[str] = set()
             tree = _to_tree(root, heap, left, right, value_field, refs)
             if len(refs) > len(best_refs):
                 best_index, best_tree, best_refs = index, tree, refs
+        if len(best_refs) >= 2:
+            break
     if best_tree is None:
         return
 
@@ -1277,10 +1285,19 @@ def _build_tree(ctx: TraceContext, view: View, out: SceneBuilder) -> None:
     seen: dict[tuple[int, str], str] = {}
     printed = ""
     output_lengths: dict[str, int] = {}
+    shown_tree = best_tree
     for index, step in out.walk(ctx):
         if index < best_index:
             printed += step.get("stdout", "")
             continue
+        # Redraw when the program reshapes the tree (invert, insert, delete).
+        current = _largest_tree(step["heap"], cls, left, right, value_field)
+        if current is not None and current != shown_tree:
+            shown_tree = current
+            out.add("show_tree", tree=current, caption=_after_line(ctx, index))
+            for ref in _tree_refs(step["heap"], cls):
+                values.setdefault(ref, _node_value(ref, step["heap"], value_field))
+            tree_values = {str(v) for v in values.values()}
         depth = len(step["stack"])
         if step["event"] == "call":
             for key in [k for k in seen if k[0] >= depth]:
@@ -1292,7 +1309,7 @@ def _build_tree(ctx: TraceContext, view: View, out: SceneBuilder) -> None:
                 seen[(depth, name)] = ref
                 out.add(
                     "highlight_node",
-                    node=values[ref],
+                    node=ref,
                     caption=f"{frame['func']}({name} = {values[ref]})",
                 )
 
@@ -1312,6 +1329,29 @@ def _build_tree(ctx: TraceContext, view: View, out: SceneBuilder) -> None:
                     out.add("visit_node", node=str(items[-1]), caption=f"Append {items[-1]} to {name}")
 
 
+def _is_setup_frame(ctx: TraceContext, func: str) -> bool:
+    return (
+        func in {"<module>", "<static>"}
+        or _is_constructor(func)
+        or _is_anonymous(func)
+        or (func == "main" and ctx.language in {"java", "cpp"})
+    )
+
+
+def _largest_tree(heap: dict[str, Any], cls: str, left: str, right: str, value_field: str | None) -> dict | None:
+    best, size = None, 0
+    for root in _tree_roots(heap, cls, left, right):
+        refs: set[str] = set()
+        tree = _to_tree(root, heap, left, right, value_field, refs)
+        if len(refs) > size:
+            best, size = tree, len(refs)
+    return best
+
+
+def _tree_refs(heap: dict[str, Any], cls: str) -> list[str]:
+    return [r for r, o in heap.items() if o.get("kind") == "object" and o.get("class") == cls]
+
+
 def _tree_roots(heap: dict[str, Any], cls: str, left: str, right: str) -> list[str]:
     nodes = [r for r, o in heap.items() if o.get("kind") == "object" and o.get("class") == cls]
     children = {
@@ -1327,7 +1367,7 @@ def _to_tree(ref: str, heap, left, right, value_field, seen: set[str]) -> dict[s
         return None
     seen.add(ref)
     fields = heap[ref].get("fields") or {}
-    node: dict[str, Any] = {"value": fields.get(value_field)}
+    node: dict[str, Any] = {"id": ref, "value": fields.get(value_field)}
     for side in (left, right):
         child = _to_tree(_ref(fields.get(side)), heap, left, right, value_field, seen)
         if child:

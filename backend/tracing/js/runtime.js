@@ -354,6 +354,42 @@ function onAsyncError(err) {
 
 // -------------------------------------------------------------------- run
 
+// LeetCode shows TreeNode / ListNode only in a comment. These globals stand
+// in for them; a snippet's own declarations shadow them. Being defined here,
+// outside the snippet, they are never instrumented or traced.
+globalThis.TreeNode = function TreeNode(val, left, right) {
+  this.val = val === undefined ? 0 : val;
+  this.left = left === undefined ? null : left;
+  this.right = right === undefined ? null : right;
+};
+globalThis.ListNode = function ListNode(val, next) {
+  this.val = val === undefined ? 0 : val;
+  this.next = next === undefined ? null : next;
+};
+// Level-order values (null = no child) -> root, the way LeetCode builds inputs.
+globalThis.__cvtTree = function (values) {
+  if (!values.length || values[0] === null) return null;
+  const root = new TreeNode(values[0]);
+  const queue = [root];
+  let i = 1;
+  while (queue.length && i < values.length) {
+    const node = queue.shift();
+    for (const side of ['left', 'right']) {
+      if (i < values.length && values[i] !== null) {
+        node[side] = new TreeNode(values[i]);
+        queue.push(node[side]);
+      }
+      i++;
+    }
+  }
+  return root;
+};
+globalThis.__cvtList = function (values) {
+  let head = null;
+  for (let i = values.length - 1; i >= 0; i--) head = new ListNode(values[i], head);
+  return head;
+};
+
 const PARAMS = ['require', 'module', 'exports'];
 const filename = 'snippet.js';
 

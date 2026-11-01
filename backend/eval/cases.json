@@ -419,5 +419,97 @@
         2
       ]
     }
+  },
+  {
+    "id": "py_tree_max_depth",
+    "language": "python",
+    "file": "python/tree_max_depth.py",
+    "note": "LeetCode style: TreeNode only in a comment, no call; an example tree must be built.",
+    "expect": {
+      "visual": "tree",
+      "events": [
+        "highlight_node"
+      ],
+      "data_values": [
+        4,
+        2,
+        6,
+        1,
+        3,
+        5,
+        7
+      ]
+    }
+  },
+  {
+    "id": "py_list_reverse_no_driver",
+    "language": "python",
+    "file": "python/list_reverse_no_driver.py",
+    "note": "ListNode only provided by LeetCode; no call.",
+    "expect": {
+      "visual": "linked_list",
+      "data_values": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ]
+    }
+  },
+  {
+    "id": "js_tree_inorder_no_driver",
+    "language": "javascript",
+    "file": "javascript/tree_inorder_no_driver.js",
+    "note": "LeetCode style: TreeNode only in a comment, no call; an example tree must be built.",
+    "expect": {
+      "visual": "tree",
+      "events": [
+        "highlight_node",
+        "visit_node"
+      ],
+      "data_values": [
+        4,
+        2,
+        6,
+        1,
+        3,
+        5,
+        7
+      ]
+    }
+  },
+  {
+    "id": "java_invert_tree",
+    "language": "java",
+    "file": "java/InvertTree.java",
+    "note": "LeetCode style: TreeNode only in a comment, no call; an example tree must be built.",
+    "expect": {
+      "visual": "tree",
+      "events": [
+        "highlight_node"
+      ],
+      "data_values": [
+        4,
+        2,
+        6,
+        1,
+        3,
+        5,
+        7
+      ]
+    }
+  },
+  {
+    "id": "cpp_tree_level_order",
+    "language": "cpp",
+    "file": "cpp/tree_level_order.cpp",
+    "note": "LeetCode style: TreeNode only in a comment, no call; an example tree must be built.",
+    "expect": {
+      "visual": "tree",
+      "events": [
+        "highlight_node"
+      ]
+    }
   }
 ]

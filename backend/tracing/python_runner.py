@@ -43,6 +43,46 @@ from functools import *
 from itertools import *
 from math import *
 import collections, heapq, bisect, functools, itertools, math, re, string, random
+
+
+# LeetCode shows these only in a comment; a snippet's own definitions,
+# executed later, replace them.
+class TreeNode:
+    def __init__(self, val=0, left=None, right=None):
+        self.val = val
+        self.left = left
+        self.right = right
+
+
+class ListNode:
+    def __init__(self, val=0, next=None):
+        self.val = val
+        self.next = next
+
+
+def _cvt_tree(values, T):
+    # Level-order values (None = no child) -> root, as LeetCode builds inputs.
+    # T is the snippet's TreeNode (its own class if it defines one).
+    if not values or values[0] is None:
+        return None
+    root = T(values[0])
+    queue, i = [root], 1
+    while queue and i < len(values):
+        node = queue.pop(0)
+        for side in ("left", "right"):
+            if i < len(values) and values[i] is not None:
+                child = T(values[i])
+                setattr(node, side, child)
+                queue.append(child)
+            i += 1
+    return root
+
+
+def _cvt_list(values, L):
+    head = None
+    for v in reversed(values):
+        head = L(v, head)
+    return head
 """
 
 

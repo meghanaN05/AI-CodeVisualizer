@@ -30,7 +30,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from tracing.driver import DriverPlan, Param, synthesize_args
+from tracing.driver import DriverPlan, Param, Structure, synthesize_args
 from tracing.python_tracer import _mutates_array_arg
 from tracing.sandbox import MAX_TRACE_STEPS, parse_trace_output, run_sandboxed
 
@@ -71,6 +71,8 @@ def trace_java(code: str) -> dict[str, Any]:
         return _failed(str(exc))
 
     program = prepare(code)
+    # Appended after the snippet, so its line numbers are unchanged.
+    program.source += _leetcode_types(code)
     trace: dict[str, Any] | None = None
     if program.main_class:
         trace = _run(java, tracer_dir, program, program.source, program.main_class)
@@ -120,9 +122,10 @@ def _run(java: Path, tracer_dir: Path, program: Program, source: str, main_class
         result = run_sandboxed(command, cwd=work_path, timeout=SANDBOX_TIMEOUT)
     trace = parse_trace_output(result, "java")
     trace.setdefault("stdout", "")
-    # Our wrapper's closing braces sit below the snippet; their "line" steps
-    # point at code the user never wrote.
-    trace["steps"] = [s for s in trace["steps"] if s["event"] != "line" or s["line"] <= line_count]
+    # Everything below the snippet is ours (wrapper braces, the driver, the
+    # example-input builders, LeetCode type stubs): drop all of its steps,
+    # calls and returns included, so the video only shows the user's code.
+    trace["steps"] = [s for s in trace["steps"] if s["line"] <= line_count]
     return trace
 
 
@@ -403,7 +406,71 @@ def _render_driver(program: Program, driver: DriverPlan) -> str:
     args = ", ".join(_render_value(jtype, value) or "null" for (jtype, _n), (_name, value) in zip(method.params, driver.args))
     owner = method.owner or program.wrapper
     target = f"{owner}.{method.name}" if method.is_static else f"new {owner}().{method.name}"
-    return f"\nclass {DRIVER_CLASS} {{ public static void main(String[] args) throws Throwable {{ {target}({args}); }} }}\n"
+    return f"\nclass {DRIVER_CLASS} {{ public static void main(String[] args) throws Throwable {{ {target}({args}); }} }}\n{_builders(driver)}"
+
+
+BUILD_CLASS = "CvtBuild"
+
+# Builds example TreeNode / ListNode inputs from LeetCode's notation
+# (level order with null for a missing child). Lives after the snippet.
+_BUILDER_METHODS = {
+    # Level order with null for a missing child, as LeetCode writes trees.
+    "tree": (
+        " static TreeNode tree(Integer[] v) {"
+        "  if (v.length == 0 || v[0] == null) return null;"
+        "  TreeNode root = new TreeNode(v[0]);"
+        "  java.util.ArrayDeque<TreeNode> q = new java.util.ArrayDeque<>(); q.add(root);"
+        "  int i = 1;"
+        "  while (!q.isEmpty() && i < v.length) {"
+        "   TreeNode n = q.poll();"
+        "   if (i < v.length && v[i] != null) { n.left = new TreeNode(v[i]); q.add(n.left); } i++;"
+        "   if (i < v.length && v[i] != null) { n.right = new TreeNode(v[i]); q.add(n.right); } i++;"
+        "  }"
+        "  return root;"
+        " }"
+    ),
+    "list": (
+        " static ListNode list(Integer[] v) {"
+        "  ListNode head = null;"
+        "  for (int i = v.length - 1; i >= 0; i--) { ListNode n = new ListNode(v[i]); n.next = head; head = n; }"
+        "  return head;"
+        " }"
+    ),
+}
+
+
+def _builders(driver: DriverPlan) -> str:
+    """Only the builders this call uses: each one names its node type, which
+    may not exist in a snippet that never uses it."""
+    kinds = sorted({v.kind for _n, v in driver.args if isinstance(v, Structure)})
+    if not kinds:
+        return ""
+    return f"class {BUILD_CLASS} {{" + "".join(_BUILDER_METHODS[k] for k in kinds) + "}\n"
+
+
+_LEETCODE_TYPES = {
+    "TreeNode": (
+        "class TreeNode { int val; TreeNode left; TreeNode right; TreeNode() {} TreeNode(int val) { this.val = val; }"
+        " TreeNode(int val, TreeNode left, TreeNode right) { this.val = val; this.left = left; this.right = right; } }\n"
+    ),
+    "ListNode": (
+        "class ListNode { int val; ListNode next; ListNode() {} ListNode(int val) { this.val = val; }"
+        " ListNode(int val, ListNode next) { this.val = val; this.next = next; } }\n"
+    ),
+}
+
+
+def _leetcode_types(code: str) -> str:
+    """LeetCode shows TreeNode / ListNode only in a comment: define them
+    when the snippet uses them without declaring them."""
+    without_comments = re.sub(r"/\*.*?\*/|//[^\n]*", "", code, flags=re.S)
+    extra = ""
+    for name, definition in _LEETCODE_TYPES.items():
+        used = re.search(rf"\b{name}\b", without_comments)
+        declared = re.search(rf"\b(class|record|interface)\s+{name}\b", without_comments)
+        if used and not declared:
+            extra += "\n" + definition
+    return extra
 
 
 def _split_type(jtype: str) -> tuple[str, list[str], int]:
@@ -450,12 +517,19 @@ def _type_hint(jtype: str) -> str:
         return "str"
     if raw in ("char", "Character"):
         return "char"
+    if raw in ("TreeNode", "ListNode"):
+        return raw
     return "object"
 
 
 def _render_value(jtype: str, value: Any) -> str | None:
     """A Java expression of type `jtype` for `value`, or None if it doesn't fit."""
     raw, args, dims = _split_type(jtype)
+    if isinstance(value, Structure):
+        if (raw, value.kind) not in {("TreeNode", "tree"), ("ListNode", "list")} or dims:
+            return None
+        items = ", ".join("null" if v is None else str(v) for v in value.values)
+        return f"{BUILD_CLASS}.{value.kind}(new Integer[]{{{items}}})"
     if dims:
         if not isinstance(value, list) or "<" in jtype:
             return None

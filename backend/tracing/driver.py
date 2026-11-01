@@ -33,6 +33,43 @@ _STRING_NAMES = re.compile(r"^(s|str|string|text|word|t|pattern|p)\d*$", re.IGNO
 _GRID_NAMES = re.compile(r"^(grid|matrix|board|mat)$", re.IGNORECASE)
 
 
+@dataclass(frozen=True)
+class Structure:
+    """An example linked structure for TreeNode / ListNode parameters.
+    `values` is LeetCode's notation: level order with None for a missing
+    child (trees), or the node values in order (lists). Each tracer builds
+    the real nodes with a small helper outside the traced code."""
+
+    kind: str  # "tree" or "list"
+    values: tuple
+
+    def __str__(self) -> str:
+        shown = ", ".join("null" if v is None else str(v) for v in self.values)
+        return f"{self.kind} [{shown}]"
+
+
+# A balanced BST (so BST problems work too) and a sparser tree that has
+# missing children, which exercises the `if not node` branches.
+EXAMPLE_TREES = ((4, 2, 6, 1, 3, 5, 7), (5, 3, 8, 1, None, 7))
+EXAMPLE_LIST = (1, 2, 3, 4, 5)
+_TREE_NAMES = re.compile(r"^(root|tree|t|root1|root2|t1|t2|node)$", re.IGNORECASE)
+_LIST_NAMES = re.compile(r"^(head|l1|l2|list1|list2|heada|headb|node)$", re.IGNORECASE)
+
+
+def structure_kind(param: "Param") -> str | None:
+    hint = param.type_hint.lower()
+    if "treenode" in hint:
+        return "tree"
+    if "listnode" in hint:
+        return "list"
+    if not hint or hint in {"object", "any"}:
+        if _TREE_NAMES.match(param.name) and param.name.lower() != "node":
+            return "tree"
+        if _LIST_NAMES.match(param.name) and param.name.lower() != "node":
+            return "list"
+    return None
+
+
 @dataclass
 class Param:
     name: str
@@ -54,7 +91,10 @@ class DriverPlan:
         return {
             "function": self.function,
             "class": self.owner_class,
-            "args": [[name, value] for name, value in self.args],
+            "args": [
+                [name, {value.kind: list(value.values)} if isinstance(value, Structure) else value]
+                for name, value in self.args
+            ],
             "variant": self.variant,
             "description": f"Example input (not in your snippet): {self.describe()}",
         }
@@ -127,6 +167,21 @@ def candidate_args(params: list[Param], variant: str = "sorted", limit: int = 10
                     variant_args = list(base)
                     variant_args[position] = (name, pick)
                     candidates.append(variant_args)
+    trees = [v for _n, v in base if isinstance(v, Structure) and v.kind == "tree"]
+    for position, (name, value) in enumerate(base):
+        if isinstance(value, Structure) and value.kind == "tree":
+            for shape in EXAMPLE_TREES[1:]:
+                variant_args = list(base)
+                variant_args[position] = (name, Structure("tree", shape))
+                candidates.append(variant_args)
+        elif trees and _SEARCH_NAMES.match(name) and isinstance(value, int):
+            # A value already in the tree (search/delete) and one that is not
+            # (insert); coverage decides which shows more of the code.
+            present = [v for v in trees[0].values if v is not None]
+            for pick in (present[len(present) // 2], max(present) + 2):
+                variant_args = list(base)
+                variant_args[position] = (name, pick)
+                candidates.append(variant_args)
     unique: list[list[tuple[str, Any]]] = []
     for args in candidates:
         if args not in unique:
@@ -137,6 +192,11 @@ def candidate_args(params: list[Param], variant: str = "sorted", limit: int = 10
 def _guess(param: Param, array: list[int], has_array: bool) -> Any:
     name = param.name
     hint = param.type_hint.lower().replace(" ", "")
+    kind = structure_kind(param)
+    if kind == "tree":
+        return Structure("tree", EXAMPLE_TREES[0])
+    if kind == "list":
+        return Structure("list", EXAMPLE_LIST)
 
     if _GRID_NAMES.match(name) or hint.count("[]") >= 2 or "vector<vector" in hint or "list[list" in hint:
         return [[1, 3, 1], [1, 5, 1], [4, 2, 1]]
@@ -162,6 +222,8 @@ def _guess(param: Param, array: list[int], has_array: bool) -> Any:
 
 
 def _is_array_param(param: Param) -> bool:
+    if structure_kind(param):
+        return False  # "ListNode" starts with "list" but is not an array
     hint = param.type_hint.lower().replace(" ", "")
     if hint.count("[]") == 1 or hint.startswith(("list[", "list", "vector<", "array", "int*", "number[]")):
         return "list[list" not in hint and "vector<vector" not in hint
@@ -170,4 +232,6 @@ def _is_array_param(param: Param) -> bool:
 
 def _short(value: Any) -> str:
     text = repr(value) if isinstance(value, str) else str(value)
+    if isinstance(value, Structure):
+        return text
     return text if len(text) <= 40 else text[:37] + "..."
